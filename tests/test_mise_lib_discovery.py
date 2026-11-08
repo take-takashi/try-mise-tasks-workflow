@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 import stat
 import subprocess
+import shutil
+import sys
 import tempfile
 import unittest
 
@@ -13,13 +15,41 @@ import unittest
 class MiseLibraryDiscoveryTest(unittest.TestCase):
     def test_project_library_modules_are_not_executable(self):
         project = Path(__file__).resolve().parent.parent
-        for tasks in (project / ".mise" / "tasks", project / "mise-tasks"):
-            if tasks.is_dir():
-                for library in tasks.rglob("_lib"):
-                    if library.is_dir():
-                        for module in library.rglob("*.py"):
-                            with self.subTest(module=module):
-                                self.assertEqual(module.stat().st_mode & 0o111, 0, str(module))
+        tasks = project / ".mise" / "tasks"
+        for library in tasks.rglob("_lib"):
+            if library.is_dir():
+                for module in library.rglob("*.py"):
+                    with self.subTest(module=module):
+                        self.assertEqual(module.stat().st_mode & 0o111, 0, str(module))
+
+    def test_copied_awf_and_mdw_entrypoints_are_discoverable_and_importable(self):
+        project = Path(__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            tasks = root / ".mise" / "tasks"
+            environment = {**os.environ, "MISE_YES": "1"}
+            shutil.copytree(project / ".mise" / "tasks" / "awf", tasks / "awf",
+                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            standalone = subprocess.run(
+                [sys.executable, str(tasks / "awf" / "review.py"), "--help"],
+                cwd=root, env=environment, capture_output=True, text=True, encoding="utf-8",
+            )
+            self.assertEqual(standalone.returncode, 0, standalone.stderr)
+            shutil.copytree(project / ".mise" / "tasks" / "mdw", tasks / "mdw",
+                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            listing = subprocess.run(
+                ["mise", "tasks", "ls", "--json"], cwd=root, env=environment,
+                check=True, capture_output=True, text=True, encoding="utf-8",
+            )
+            names = {entry["name"] for entry in json.loads(listing.stdout)}
+            self.assertTrue({"awf:review", "awf:review:prepare", "awf:review:security",
+                             "awf:review:quality", "mdw:review"}.issubset(names))
+            self.assertFalse(any(":_lib:" in name for name in names))
+            result = subprocess.run(
+                [sys.executable, str(tasks / "mdw" / "review"), "--help"], cwd=root,
+                env=environment, capture_output=True, text=True, encoding="utf-8",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_library_is_importable_but_not_a_task(self):
         with tempfile.TemporaryDirectory() as temporary:

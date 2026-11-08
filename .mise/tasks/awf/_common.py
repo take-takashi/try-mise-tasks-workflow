@@ -118,13 +118,13 @@ def initialize_root():
 
 
 def config(role):
-    prefix = f"AWF_REVIEW_{role.upper()}_"
-    provider = os.environ.get(prefix + "PROVIDER", "codex")
-    model = os.environ.get(prefix + "MODEL", "gpt-6.1-sol")
-    effort = os.environ.get(prefix + "EFFORT", "medium")
-    billing = os.environ.get(prefix + "BILLING", "subscription")
+    prefix = f"MDW_REVIEW_{role.upper()}_"
+    provider = resolve_review_setting(role, "PROVIDER", "codex")
+    model = resolve_review_setting(role, "MODEL", "gpt-6.1-sol")
+    effort = resolve_review_setting(role, "EFFORT", "medium")
+    billing = resolve_review_setting(role, "BILLING", "subscription")
     if provider not in ("codex", "claude") or not model or billing not in ("subscription", "api"):
-        raise ValueError(f"{prefix}PROVIDER、MODEL、BILLING の設定が不正です。")
+        raise ValueError(f"{prefix}PROVIDER、MODEL、BILLING の設定が不正です。MDW_REVIEW_* またはAWF_REVIEW_*を確認してください。")
     if provider == "codex" and billing != "subscription":
         raise ValueError("CodexのAPI課金はこのPoCでは対応していません。")
     supported_efforts = {
@@ -153,6 +153,24 @@ def child_environment(provider, billing):
             raise ValueError("Claude APIには AWF_ANTHROPIC_API_KEY が必要です。")
         env["ANTHROPIC_API_KEY"] = api_key
     return env
+
+
+def resolve_review_setting(role, field, default):
+    """レビュー設定を個別設定、旧AWF設定、共通設定、既定値の順に解決する。"""
+    role = role.upper()
+    field = field.upper()
+    names = (
+        f"MDW_REVIEW_{role}_{field}",
+        # 既存利用者のmise.local.tomlなどにあるAWF設定を引き続き受け付ける。
+        f"AWF_REVIEW_{role}_{field}",
+        f"MDW_REVIEW_{field}",
+        f"MDW_DEFAULT_{field}",
+    )
+    for name in names:
+        value = os.environ.get(name)
+        if value is not None and value.strip():
+            return value
+    return default
 
 
 def check_auth(provider, billing, executable, env):
