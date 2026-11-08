@@ -22,31 +22,29 @@ class MiseLibraryDiscoveryTest(unittest.TestCase):
                     with self.subTest(module=module):
                         self.assertEqual(module.stat().st_mode & 0o111, 0, str(module))
 
-    def test_copied_awf_and_mdw_entrypoints_are_discoverable_and_importable(self):
+    def test_copied_mdw_entrypoints_are_discoverable_and_importable(self):
         project = Path(__file__).resolve().parent.parent
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             tasks = root / ".mise" / "tasks"
             environment = {**os.environ, "MISE_YES": "1"}
-            shutil.copytree(project / ".mise" / "tasks" / "awf", tasks / "awf",
-                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-            standalone = subprocess.run(
-                [sys.executable, str(tasks / "awf" / "review.py"), "--help"],
-                cwd=root, env=environment, capture_output=True, text=True, encoding="utf-8",
-            )
-            self.assertEqual(standalone.returncode, 0, standalone.stderr)
             shutil.copytree(project / ".mise" / "tasks" / "mdw", tasks / "mdw",
                             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
             listing = subprocess.run(
                 ["mise", "tasks", "ls", "--json"], cwd=root, env=environment,
                 check=True, capture_output=True, text=True, encoding="utf-8",
             )
-            names = {entry["name"] for entry in json.loads(listing.stdout)}
-            self.assertTrue({"awf:review", "awf:review:prepare", "awf:review:security",
-                             "awf:review:quality", "mdw:review"}.issubset(names))
+            entries = {entry["name"]: entry for entry in json.loads(listing.stdout)}
+            names = set(entries)
+            self.assertTrue({"mdw:check", "mdw:review", "mdw:review:prepare",
+                             "mdw:review:check", "mdw:review:security",
+                             "mdw:review:quality"}.issubset(names))
             self.assertFalse(any(":_lib:" in name for name in names))
+            self.assertEqual(entries["mdw:review:check"]["depends"], ["mdw:review:prepare"])
+            for role in ("security", "quality"):
+                self.assertEqual(entries[f"mdw:review:{role}"]["depends"], ["mdw:review:check"])
             result = subprocess.run(
-                [sys.executable, str(tasks / "mdw" / "review"), "--help"], cwd=root,
+                [sys.executable, str(tasks / "mdw" / "review.py"), "--help"], cwd=root,
                 env=environment, capture_output=True, text=True, encoding="utf-8",
             )
             self.assertEqual(result.returncode, 0, result.stderr)

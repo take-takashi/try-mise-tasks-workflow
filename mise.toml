@@ -2,8 +2,6 @@
 python = "3.14"
 
 [env]
-AWF_REVIEW_BASE = "main"
-AWF_REVIEW_HEAD = "HEAD"
 _.file = [
   ".mdw/models.env",
   { path = ".mdw/models.local.env", redact = true },

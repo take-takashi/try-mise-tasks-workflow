@@ -1,4 +1,4 @@
-"""AWFのファイルタスクが共有する処理。"""
+"""MDWのレビュー処理が共有する機能。"""
 
 import json
 import os
@@ -141,7 +141,9 @@ def config(role):
 
 def child_environment(provider, billing):
     env = os.environ.copy()
-    api_key = env.pop("AWF_ANTHROPIC_API_KEY", "")
+    api_key = env.pop("MDW_ANTHROPIC_API_KEY", "")
+    legacy_api_key = env.pop("AWF_ANTHROPIC_API_KEY", "")
+    api_key = api_key or legacy_api_key
     env.pop("REVIEW_ANTHROPIC_API_KEY", None)
     forbidden = ("OPENAI_API_KEY", "CODEX_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
                  "ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
@@ -150,7 +152,7 @@ def child_environment(provider, billing):
         env.pop(key, None)
     if provider == "claude" and billing == "api":
         if not api_key:
-            raise ValueError("Claude APIには AWF_ANTHROPIC_API_KEY が必要です。")
+            raise ValueError("Claude APIには MDW_ANTHROPIC_API_KEY が必要です。")
         env["ANTHROPIC_API_KEY"] = api_key
     return env
 
@@ -199,11 +201,11 @@ def check():
 
 def timeout_seconds():
     try:
-        timeout = int(os.environ.get("AWF_REVIEW_TIMEOUT_SECONDS", "600"))
+        timeout = int(os.environ.get("MDW_REVIEW_TIMEOUT_SECONDS", os.environ.get("AWF_REVIEW_TIMEOUT_SECONDS", "600")))
     except ValueError as exc:
-        raise ValueError("AWF_REVIEW_TIMEOUT_SECONDS は正の整数を指定してください。") from exc
+        raise ValueError("MDW_REVIEW_TIMEOUT_SECONDS は正の整数を指定してください。") from exc
     if timeout < 1:
-        raise ValueError("AWF_REVIEW_TIMEOUT_SECONDS は正の整数を指定してください。")
+        raise ValueError("MDW_REVIEW_TIMEOUT_SECONDS は正の整数を指定してください。")
     return timeout
 
 
