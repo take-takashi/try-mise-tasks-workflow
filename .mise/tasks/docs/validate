@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+#MISE description="ADR のメタデータと参照を検証する"
+import argparse
+import sys
+
+from _lib import documents
+
+
+parser = argparse.ArgumentParser(description="ADR の規約を検証し、結果を JSON で出力します。")
+parser.parse_args()
+sys.exit(documents.run(documents.validate))
