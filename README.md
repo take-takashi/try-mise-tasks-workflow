@@ -83,3 +83,29 @@ Claude APIを使う場合は`AWF_REVIEW_SECURITY_BILLING = "api"`を指定し、
 Codexには読み取り専用のサンドボックスを指定し、Claudeにはファイル検索・読み取りとBashのツールを許可して、planモードで起動します。コミットIDを使って差分とファイルを調べるよう依頼しますが、作業ツリーのファイルを読めないように隔離するものではありません。CLI自身の設定、フック、プラグイン、管理者設定なども完全には隔離しません。CLIのツールが読めない文字コードや、Gitがバイナリーと扱うファイルがある場合、モデルによって確認の可否が異なります。`limitations`はモデルの申告であり、すべての確認漏れを自動検知するものではありません。Judgeによる重複・矛盾の判断と、その効果の比較は今後の検証です。
 
 macOSでは、CodexのChatGPT認証を用いた2並列の実行と集約、個人設定の上書きを確認しました。混在する文字コードの自作ファイルをコミットして実行し、ファイルごとの確認状況と結果を確認しています。WindowsとLinux、コミットID方式でのClaudeの実接続とAPIの課金先は未検証です。
+
+## Docs: ADRの作成と検索
+
+Docsは、ADRの作成、検索、規約の検証を行うPoCです。miseとPython 3.14を用意して、次のように実行します。
+
+```text
+mise tasks ls --json
+mise run docs:new --help
+mise run docs:new adr "採用するデータベース"
+mise run docs:search "データベース"
+mise run docs:validate
+```
+
+作成と検索は、ID、タイトル、種別、プロジェクトルートからの相対パスをJSONで返します。検索は大文字と小文字を区別せず、メタデータと本文から文字列を探します。該当しない場合は空の配列を返します。検索結果の`path`から通常のファイル読み取りで本文を参照できます。コマンドの結果は標準出力へ、miseの実行状況は標準エラー出力へ出ます。引数が不足している場合などは、miseがエラーを表示します。
+
+文書は`docs/decisions/`に保存されます。先頭の`---`の間に、`id`、`title`、`type`を含む**一行のJSON**を記載します。一般的なYAMLのFrontmatterには対応していません。IDは`ADR-0001`の形式で、ファイル名は`0001.md`または`0001-説明.md`の形式です。ファイル名とIDの番号は一致させます。本文中の`[[ADR-0001]]`はADRのIDへの参照として扱います。
+
+`docs:validate`は、メタデータ、ファイル名、重複IDと`[[ADR-...]]`形式の参照先を検証します。結果をJSONで返し、違反があれば終了コードを1にします。Markdownの通常のリンク、内容の正しさ、AIが文書を実際に読んだかどうかは検証しません。現時点ではCIへの組み込みは行っていません。
+
+別のプロジェクトでは`.mise/tasks/docs/`をコピーし、miseとPythonを利用できるようにしてください。macOS / Linuxでは、公開するタスクの実行権限を保持してください。コピー先の`docs/decisions/`も上記の形式に従う必要があります。Windowsでの動作は未検証です。
+
+Pythonの共通処理を`_lib/`に置く理由と制約は[ADR 0001](docs/decisions/0001-mise-task-python-library.md)に記録しています。macOSまたはLinuxで、コピー後のDocsタスク、miseによるタスクの検出とPythonのimportを次のコマンドで検証できます。
+
+```text
+mise exec -- python -m unittest discover -s tests -v
+```
