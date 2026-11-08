@@ -1,6 +1,7 @@
 # Byte-compiled / optimized / DLL files
 .reviews/
 mise.local.toml
+/.mdw/models.local.env
 __pycache__/
 *.py[codz]
 *$py.class

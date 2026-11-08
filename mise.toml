@@ -4,11 +4,7 @@ python = "3.14"
 [env]
 AWF_REVIEW_BASE = "main"
 AWF_REVIEW_HEAD = "HEAD"
-AWF_REVIEW_SECURITY_PROVIDER = "codex"
-AWF_REVIEW_SECURITY_MODEL = "gpt-6.1-sol"
-AWF_REVIEW_SECURITY_EFFORT = "medium"
-AWF_REVIEW_SECURITY_BILLING = "subscription"
-AWF_REVIEW_QUALITY_PROVIDER = "codex"
-AWF_REVIEW_QUALITY_MODEL = "gpt-6.1-sol"
-AWF_REVIEW_QUALITY_EFFORT = "medium"
-AWF_REVIEW_QUALITY_BILLING = "subscription"
+_.file = [
+  ".mdw/models.env",
+  { path = ".mdw/models.local.env", redact = true },
+]
