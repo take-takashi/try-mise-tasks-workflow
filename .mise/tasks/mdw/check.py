@@ -1,10 +1,10 @@
 #!/usr/bin/env python
-#MISE description="AWFで使うレビュアーの設定と認証を確認する"
+#MISE description="MDWで使うレビュアーの設定と認証を確認する"
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import _common
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from mdw._lib import _common
 
 
 if __name__ == "__main__":

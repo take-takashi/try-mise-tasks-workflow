@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from awf._lib.review import prepare
+from mdw._lib.workflows.review import prepare
 
 
 def main():

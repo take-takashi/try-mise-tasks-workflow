@@ -1,8 +1,8 @@
 # MDW: mise dev workflows
 
-MDWは、miseのファイルタスクを公開入口にして、組み合わせ可能なPythonワークフロー関数を実行する基盤のPoCです。既存のAWF（Agentic Workflow）による並列コードレビューを、最初の再利用対象として移行しています。Python 3.14の標準ライブラリを使います。
+MDWは、miseのファイルタスクを公開入口にして、組み合わせ可能なPythonワークフロー関数を実行する基盤のPoCです。セキュリティと品質の観点から並列にコードレビューする機能を備えています。Python 3.14の標準ライブラリを使います。
 
-`.mise/tasks/awf/`フォルダーを別のプロジェクトの`.mise/tasks/`にコピーし、必要な`AWF_`環境変数を設定して利用できます。コピー先ではPython 3.14、Git、利用するCLIを実行できるようにし、macOSとLinuxではタスクファイルに実行権限を付けてください。生成される`.reviews/`はGitの管理対象から除外してください。
+`.mise/tasks/mdw/`フォルダーを別のプロジェクトの`.mise/tasks/`にコピーし、必要に応じて`MDW_`環境変数を設定して利用できます。コピー先ではPython 3.14、Git、利用するCLIを実行できるようにし、macOSとLinuxではタスクファイルに実行権限を付けてください。共有のモデル設定を使う場合は`.mdw/models.env`と`mise.toml`のenvファイル設定もコピーしてください。生成される`.reviews/`はGitの管理対象から除外してください。
 
 ## 事前準備
 
@@ -19,15 +19,17 @@ mise run mdw:review --help
 mise run mdw:review
 ```
 
-`mdw:review`は、既存AWFのレビュー部品を組み合わせるMDWの入口です。`mise run awf:review`も同じPython関数を呼び出す互換入口として残しています。どちらも対象コミットの固定、設定と認証の確認、セキュリティと品質の並列レビュー、結果の集約を行い、`.reviews/merged.json`を作成します。`awf:review:prepare`、`awf:review:security`、`awf:review:quality`は、個別のmiseタスクとしても実行できます。Pythonは差分の本文を読み込まず、各CLIには同じコミットIDとファイル一覧を渡し、差分と周辺コードの確認を依頼します。同じ作業ディレクトリーで複数のレビューを同時に実行しないでください。
+`mdw:review`は、対象コミットの固定、設定と認証の確認、セキュリティと品質の並列レビュー、結果の集約を行い、`.reviews/merged.json`を作成します。`mdw:review:prepare`、`mdw:review:security`、`mdw:review:quality`は、個別のmiseタスクとしても実行できます。Pythonは差分の本文を読み込まず、各CLIには同じコミットIDとファイル一覧を渡し、差分と周辺コードの確認を依頼します。同じ作業ディレクトリーで複数のレビューを同時に実行しないでください。
+
+旧`awf:*`タスクは`mdw:*`へ統合しました。たとえば、`awf:review`は`mdw:review`に、`awf:check`は`mdw:check`に変更してください。
 
 `.mise/tasks/`をPythonの検索パスに追加すると、別のワークフローから`from mdw._lib.workflows.review import run`で呼び出せます。`run()`は集約結果を辞書として返し、ファイルへの保存も行います。対象の固定だけが必要な場合は、同じモジュールの`prepare()`を呼び出せます。
 
-`mise run awf:check`では、レビューで利用するCLIの設定と認証だけを確認できます。モデルを実際に利用できるかどうかは、レビュー実行時に各CLIが判断します。
+`mise run mdw:check`では、レビューで利用するCLIの設定と認証だけを確認できます。モデルを実際に利用できるかどうかは、レビュー実行時に各CLIが判断します。
 
-出力先とレビュー対象は、`mise run mdw:review`または`mise run awf:review`を実行した場所のGit worktreeのルートです。worktreeのサブフォルダーから実行しても、そのworktree内の`.reviews/`に出力します。
+出力先とレビュー対象は、`mise run mdw:review`を実行した場所のGit worktreeのルートです。worktreeのサブフォルダーから実行しても、そのworktree内の`.reviews/`に出力します。
 
-`AWF_REVIEW_BASE`にはPRのベースとなるブランチまたはコミットを、`AWF_REVIEW_HEAD`にはレビュー対象のブランチまたはコミットを指定できます。既定値はそれぞれ`main`と`HEAD`です。ベースとヘッドの共通祖先からヘッドまでを比較するため、PRのベースブランチに合わせて`origin/main`などを指定してください。必要なコミット履歴がローカルにない場合は、あらかじめ取得してください。`AWF_REVIEW_TIMEOUT_SECONDS`で各CLIのタイムアウトを秒単位で変更できます。既定値は600秒です。実行前に以前の成果物を削除するため、レビューが失敗した場合、以前の`merged.json`は残りません。レビュー結果には機密情報が含まれる可能性があります。
+`MDW_REVIEW_BASE`にはPRのベースとなるブランチまたはコミットを、`MDW_REVIEW_HEAD`にはレビュー対象のブランチまたはコミットを指定できます。既定値はそれぞれ`main`と`HEAD`です。ベースとヘッドの共通祖先からヘッドまでを比較するため、PRのベースブランチに合わせて`origin/main`などを指定してください。必要なコミット履歴がローカルにない場合は、あらかじめ取得してください。`MDW_REVIEW_TIMEOUT_SECONDS`で各CLIのタイムアウトを秒単位で変更できます。既定値は600秒です。実行前に以前の成果物を削除するため、レビューが失敗した場合、以前の`merged.json`は残りません。レビュー結果には機密情報が含まれる可能性があります。
 
 ## プロバイダーとモデルの設定
 
@@ -35,7 +37,7 @@ mise run mdw:review
 
 レビュー設定は、役割ごとの`MDW_REVIEW_<ROLE>_*`、旧設定との互換用`AWF_REVIEW_<ROLE>_*`、レビュー共通の`MDW_REVIEW_*`、`MDW_DEFAULT_*`の順で解決します。どこにも値がない場合は、Python側の既定値を使います。既定では両方の観点にCodexを使います。モデルとエフォートの組み合わせの利用可否は契約やCLIの設定によって異なるため、必要に応じて変更してください。
 
-`AWF_REVIEW_BASE`と`AWF_REVIEW_HEAD`はレビュー対象の範囲を指定するため、従来どおり`mise.toml`などで設定します。以前の`REVIEW_`で始まる設定は、`AWF_REVIEW_`で始まる名前に変更してください。Claude APIキーには`AWF_ANTHROPIC_API_KEY`を使用します。APIキーは`.mdw/models.env`やGit管理対象の設定ファイルには記載せず、環境変数または秘密情報管理ツールから渡してください。
+レビュー範囲やタイムアウトの旧`AWF_REVIEW_*`設定も引き続き読み込みます。同じ項目に`MDW_`と`AWF_`の両方が指定された場合は`MDW_`を優先します。Claude APIキーには`MDW_ANTHROPIC_API_KEY`を使用し、旧`AWF_ANTHROPIC_API_KEY`も受け付けます。APIキーは`.mdw/models.env`やGit管理対象の設定ファイルには記載せず、環境変数または秘密情報管理ツールから渡してください。
 
 共有の`.mdw/models.env`でレビュー全体の既定値を設定する例:
 
@@ -57,7 +59,7 @@ MDW_REVIEW_SECURITY_BILLING=subscription
 
 同じ設定は`mise.local.toml`の`[env]`にも記述できます。既存の`AWF_REVIEW_SECURITY_*`と`AWF_REVIEW_QUALITY_*`も引き続き読み込みます。
 
-Claude APIを使う場合は`MDW_REVIEW_SECURITY_BILLING=api`を指定し、秘密情報管理ツールなどを使って実行環境に`AWF_ANTHROPIC_API_KEY`を渡してください。キーは設定ファイルへ記載しないでください。キーはClaudeの子プロセスに限って`ANTHROPIC_API_KEY`として渡します。CodexのAPI課金、Claudeのクラウドプロバイダーやゲートウェイには、このPoCは対応していません。
+Claude APIを使う場合は`MDW_REVIEW_SECURITY_BILLING=api`を指定し、秘密情報管理ツールなどを使って実行環境に`MDW_ANTHROPIC_API_KEY`を渡してください。キーは設定ファイルへ記載しないでください。キーはClaudeの子プロセスに限って`ANTHROPIC_API_KEY`として渡します。CodexのAPI課金、Claudeのクラウドプロバイダーやゲートウェイには、このPoCは対応していません。
 
 実行前にCLIの認証状態を確認し、指定された方式と一致しない場合は失敗します。CLIの認証状態や課金設定は変更されることがあるため、実際の利用明細と設定も確認してください。CLIのエラー出力は秘密情報の露出を避けるため表示しません。失敗時は各CLIの認証、モデル、設定を個別に確認してください。
 
@@ -78,7 +80,7 @@ Claude APIを使う場合は`MDW_REVIEW_SECURITY_BILLING=api`を指定し、秘�
 }
 ```
 
-各`target`には、実際には上位の`target`と同じ値が入ります。共通スキーマは`awf/_common.py`に含まれます。Python側では、このスキーマで使用する必須フィールド、型、列挙値、最小値と余分なフィールドを個別に検証します。汎用のJSON Schema検証器ではないため、スキーマを変更するときはPython側の検証も更新してください。
+各`target`には、実際には上位の`target`と同じ値が入ります。共通スキーマは`mdw/_lib/_common.py`に含まれます。Python側では、このスキーマで使用する必須フィールド、型、列挙値、最小値と余分なフィールドを個別に検証します。汎用のJSON Schema検証器ではないため、スキーマを変更するときはPython側の検証も更新してください。
 
 Codexには読み取り専用のサンドボックスを指定し、Claudeにはファイル検索・読み取りとBashのツールを許可して、planモードで起動します。コミットIDを使って差分とファイルを調べるよう依頼しますが、作業ツリーのファイルを読めないように隔離するものではありません。CLI自身の設定、フック、プラグイン、管理者設定なども完全には隔離しません。CLIのツールが読めない文字コードや、Gitがバイナリーと扱うファイルがある場合、モデルによって確認の可否が異なります。`limitations`はモデルの申告であり、すべての確認漏れを自動検知するものではありません。Judgeによる重複・矛盾の判断と、その効果の比較は今後の検証です。
 
