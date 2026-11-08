@@ -7,7 +7,7 @@ MDWは、miseのファイルタスクを公開入口にして、組み合わせ�
 ## 事前準備
 
 - mise、Git、利用するCodex CLIまたはClaude Code CLIをインストールし、各CLIでログインしてください。
-- `mise install`でNode.js 24の最新版を用意してください。初回はmiseによるプロジェクト設定の信頼確認が表示される場合があります。
+- `mise install`でNode.js 24とBiomeの最新版を用意してください。初回はmiseによるプロジェクト設定の信頼確認が表示される場合があります。
 - レビュー対象の変更をコミットしてください。既定では`main`と`HEAD`の共通祖先から`HEAD`までのコミット済みの変更を対象とし、未コミットの変更を含めないよう各CLIへ依頼します。
 - AIのサービスへ差分が送信されるため、送信してよい内容かを確認してください。
 
@@ -24,7 +24,7 @@ mise run mdw:review --base origin/main --head HEAD
 
 旧`awf:*`タスクは`mdw:*`へ統合しました。たとえば、`awf:review`は`mdw:review`に、`awf:check`は`mdw:check`に変更してください。
 
-別のワークフローからは、`.mise/tasks/mdw/_lib/review.mjs`の`run()`を相対パスでimportして呼び出せます。`run()`は集約結果をオブジェクトとして返し、ファイルへの保存も行います。`run({ baseRef, headRef })`でレビュー対象を指定でき、対象の固定だけが必要な場合は`prepare()`を呼び出せます。
+別のワークフローからは、`.mise/tasks/mdw/_lib/review.mts`の`run()`を相対パスでimportして呼び出せます。`run()`は集約結果をオブジェクトとして返し、ファイルへの保存も行います。`run({ baseRef, headRef })`でレビュー対象を指定でき、対象の固定だけが必要な場合は`prepare()`を呼び出せます。
 
 `mise run mdw:check`では、レビューで利用するCLIの設定と認証だけを確認できます。モデルを実際に利用できるかどうかは、レビュー実行時に各CLIが判断します。
 
@@ -81,7 +81,7 @@ Claude APIを使う場合は`MDW_REVIEW_SECURITY_BILLING=api`を指定し、秘�
 }
 ```
 
-各`target`には、実際には上位の`target`と同じ値が入ります。共通スキーマは`mdw/_lib/common.mjs`に含まれます。プログラム側では、このスキーマで使用する必須フィールド、型、列挙値、最小値と余分なフィールドを個別に検証します。汎用のJSON Schema検証器ではないため、スキーマを変更するときは検証も更新してください。
+各`target`には、実際には上位の`target`と同じ値が入ります。共通スキーマは`mdw/_lib/common.mts`に含まれます。プログラム側では、このスキーマで使用する必須フィールド、型、列挙値、最小値と余分なフィールドを個別に検証します。汎用のJSON Schema検証器ではないため、スキーマを変更するときは検証も更新してください。
 
 Codexには読み取り専用のサンドボックスを指定し、Claudeにはファイル検索・読み取りとBashのツールを許可して、planモードで起動します。コミットIDを使って差分とファイルを調べるよう依頼しますが、作業ツリーのファイルを読めないように隔離するものではありません。CLI自身の設定、フック、プラグイン、管理者設定なども完全には隔離しません。CLIのツールが読めない文字コードや、Gitがバイナリーと扱うファイルがある場合、モデルによって確認の可否が異なります。`limitations`はモデルの申告であり、すべての確認漏れを自動検知するものではありません。Judgeによる重複・矛盾の判断と、その効果の比較は今後の検証です。
 
@@ -107,8 +107,9 @@ mise run docs:validate
 
 別のプロジェクトでは`.mise/tasks/docs/`をコピーし、miseとNode.js 24を利用できるようにしてください。macOS / Linuxでは、公開するタスクの実行権限を保持してください。コピー先の`docs/decisions/`も上記の形式に従う必要があります。Windowsでの動作は未検証です。
 
-Node.jsへの移行と部品の配置については[ADR 0002](docs/decisions/0002-node-workflow-runtime.md)に記録しています。macOSまたはLinuxで、コピー後のタスク、miseによるタスクの検出とレビューの集約を次のコマンドで検証できます。
+Node.jsへの移行と部品の配置については[ADR 0002](docs/decisions/0002-node-workflow-runtime.md)に記録しています。macOSまたはLinuxで、Biomeの既定設定による検証と、コピー後のタスク、miseによるタスクの検出およびレビューの集約を次のコマンドで確認できます。
 
 ```text
-mise exec -- node --test tests/*.test.mjs
+mise run check
+mise exec -- node --test tests/*.test.mts
 ```
