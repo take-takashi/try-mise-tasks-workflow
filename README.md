@@ -113,3 +113,29 @@ Node.jsへの移行と部品の配置については[ADR 0002](docs/decisions/00
 mise run check
 mise exec -- node --test tests/*.test.mts
 ```
+
+## 作業用 worktree
+
+リポジトリの変更は、作業ごとに `.worktree/` 内の worktree で進めます。作業中の AI はブランチ名を決め、次のタスクを呼び出します。
+
+```sh
+mise run mdw:worktree:new --branch feat/passkey-login
+```
+
+シェルから作業内容を渡すと、MDW が AI CLI を呼び出してブランチ名を決めます。
+
+```sh
+mise run mdw:worktree:new "パスキー認証を追加する"
+```
+
+ブランチ名は `feat`、`fix`、`refactor`、`docs`、`test`、`chore`、`perf`、`build`、`ci`、`revert` のいずれかと、英小文字・数字・ハイフンによる説明を組み合わせます。名前が重複した場合は末尾に番号を付けます。AI の設定には `MDW_DEFAULT_PROVIDER`、`MDW_DEFAULT_MODEL`、`MDW_DEFAULT_EFFORT`、`MDW_DEFAULT_BILLING` を使用します。`MDW_WORKTREE_PROVIDER` などの `MDW_WORKTREE_` 設定で上書きできます。
+
+作成タスクは `main` の追跡先から取得し、fast-forward で更新できる場合は `main` を更新します。ローカルの未プッシュのコミットは保持し、履歴が分岐した場合や更新を妨げる変更がある場合は中断します。作成結果は `branch`、`path`、`base_commit` を含む JSON です。`path` は絶対パスです。
+
+マージ後は、対象の worktree の外から次のタスクを実行します。
+
+```sh
+mise run mdw:worktree:cleanup /絶対パス/.worktree/feat-passkey-login
+```
+
+クリーンアップは未コミット、未追跡、Git が無視するファイルがないことを確認します。通常マージは Git の履歴で確認し、squash merge は `gh` CLI で取得したマージ済み PR と差分を照合します。差分が一致しない場合など、マージ済みと確認できないときは削除しません。タスクはコミット、プッシュ、PR の作成、マージを行いません。親シェルのカレントディレクトリは変更できないため、対象の外から実行してください。
