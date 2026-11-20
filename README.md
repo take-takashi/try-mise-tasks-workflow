@@ -24,7 +24,7 @@ mise run mdw:review --base origin/main --head HEAD
 
 旧`awf:*`タスクは`mdw:*`へ統合しました。たとえば、`awf:review`は`mdw:review`に、`awf:check`は`mdw:check`に変更してください。
 
-別のワークフローからは、`.mise/tasks/mdw/_lib/review.mts`の`run()`を相対パスでimportして呼び出せます。`run()`は集約結果をオブジェクトとして返し、ファイルへの保存も行います。`run({ baseRef, headRef })`でレビュー対象を指定でき、対象の固定だけが必要な場合は`prepare()`を呼び出せます。
+レビューの流れは `.mise/tasks/mdw/review.mts` の `run()` に記述しています。別のワークフローからは、`.mise/tasks/mdw/_lib/review.mts`の`run()`を相対パスでimportして呼び出せます。`run()`は集約結果をオブジェクトとして返し、ファイルへの保存も行います。`run({ baseRef, headRef })`でレビュー対象を指定でき、対象の固定だけが必要な場合は`prepare()`を呼び出せます。
 
 `mise run mdw:check`では、レビューで利用するCLIの設定と認証だけを確認できます。モデルを実際に利用できるかどうかは、レビュー実行時に各CLIが判断します。
 

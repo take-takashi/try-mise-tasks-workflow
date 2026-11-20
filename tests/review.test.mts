@@ -214,6 +214,7 @@ test("コピーしたMDWをmiseから実行し、異なるプロバイダーを�
 		"    if (Date.now() > end) { clearInterval(timer); process.exit(10); }",
 		"    if (process.env.TEST_SOLO !== '1' && !fs.existsSync(path.join(process.env.TEST_CONTROL, other))) return;",
 		"    clearInterval(timer); const review = {findings: [], limitations: [], file_coverage: [{file:'sample.txt', status:'reviewed', detail:'fake'}]};",
+		"    if (process.env.TEST_FAIL_REVIEW === name) process.exit(12);",
 		"    if (name === 'codex') fs.writeFileSync(args[args.indexOf('-o') + 1], JSON.stringify(review));",
 		"    else console.log(JSON.stringify({structured_output:review, permission_denials:[]}));",
 		"  }, 20);",
@@ -305,6 +306,17 @@ test("コピーしたMDWをmiseから実行し、異なるプロバイダーを�
 	assert.equal(merged.target.base_commit, base);
 	assert.equal(merged.target.base_ref, "main");
 	assert.equal(merged.target.head_ref, "HEAD");
+	fs.rmSync(path.join(control, "codex"));
+	fs.rmSync(path.join(control, "claude"));
+	const failed = spawnSync("mise", ["run", "mdw:review"], {
+		cwd,
+		env: { ...env, TEST_FAIL_REVIEW: "claude" },
+		encoding: "utf8",
+	});
+	assert.equal(failed.status, 1, failed.stderr);
+	assert.match(failed.stderr, /終了コード 12/);
+	assert.ok(fs.existsSync(path.join(root, ".reviews/quality.json")));
+	assert.ok(!fs.existsSync(path.join(root, ".reviews/merged.json")));
 	fs.rmSync(path.join(control, "codex"));
 	fs.rmSync(path.join(control, "claude"));
 	env.TEST_BASE = base;
