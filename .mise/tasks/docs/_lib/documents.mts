@@ -14,9 +14,9 @@ const casefoldMapping = JSON.parse(
 	fs.readFileSync(new URL("./casefold.json", import.meta.url), "utf8"),
 ).mapping;
 const relative = (file) => path.relative(root, file).split(path.sep).join("/");
-const error = (message) => ({ ok: false, error: message });
+export const error = (message) => ({ ok: false, error: message });
 
-function documents() {
+export function documents() {
 	if (!fs.existsSync(directory)) return [];
 	return fs
 		.readdirSync(directory)
@@ -56,19 +56,18 @@ function readDocument(file) {
 	return { metadata, text };
 }
 
-export function newDocument(kind, title) {
-	if (kind !== "adr") return error("type は adr のみ対応しています");
-	title = title.trim();
-	if (!title || /[\r\n]/.test(title))
-		return error("タイトルには空でない一行の文字列を指定してください");
+export function nextDocumentNumber(files) {
 	let number = 0n;
-	for (const file of documents()) {
+	for (const file of files) {
 		const match = filenamePattern.exec(path.basename(file));
 		if (!match) return error("不正なファイル名です: " + relative(file));
 		const candidate = BigInt(match[1]);
 		if (candidate > number) number = candidate;
 	}
-	const digits = String(number + 1n).padStart(4, "0");
+	return { ok: true, digits: String(number + 1n).padStart(4, "0") };
+}
+
+export function saveDocument(kind, title, digits) {
 	const metadata = { id: "ADR-" + digits, title, type: kind };
 	const file = path.join(directory, digits + ".md");
 	const content =
@@ -88,34 +87,32 @@ export function newDocument(kind, title) {
 	return { ok: true, document: { ...metadata, path: relative(file) } };
 }
 
-function fold(text) {
+export function fold(text) {
 	return Array.from(
 		text,
 		(character) => casefoldMapping[character] ?? character,
 	).join("");
 }
 
-export function search(query) {
-	if (!query.trim()) return error("検索語を指定してください");
+export function findMatchingDocuments(files, query) {
 	const matches = [];
-	for (const file of documents()) {
+	for (const file of files) {
 		let document: ReturnType<typeof readDocument>;
 		try {
 			document = readDocument(file);
 		} catch (exc) {
 			return error(relative(file) + ": " + exc.message);
 		}
-		if (fold(document.text).includes(fold(query)))
+		if (fold(document.text).includes(query))
 			matches.push({ ...document.metadata, path: relative(file) });
 	}
 	return { ok: true, documents: matches };
 }
 
-export function validate() {
+export function inspectDocuments(files) {
 	const issues = [],
 		found = new Map(),
 		references = [];
-	const files = documents();
 	for (const file of files) {
 		let document: ReturnType<typeof readDocument>;
 		try {
@@ -134,6 +131,11 @@ export function validate() {
 		for (const match of document.text.matchAll(referencesPattern))
 			references.push([file, match[1]]);
 	}
+	return { issues, found, references };
+}
+
+export function findMissingReferences(references, found) {
+	const issues = [];
 	for (const [file, reference] of references) {
 		if (!found.has(reference))
 			issues.push({
@@ -141,7 +143,7 @@ export function validate() {
 				message: "参照先が見つかりません: " + reference,
 			});
 	}
-	return { ok: issues.length === 0, checked: files.length, errors: issues };
+	return issues;
 }
 
 export function cli(action, ...args) {
