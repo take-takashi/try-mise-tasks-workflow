@@ -11,3 +11,11 @@ _.file = [
 [tasks.check]
 description = "Biomeの既定設定でフォーマットとコードを検証します"
 run = "biome check .mise/tasks tests"
+
+[tasks.lint]
+description = "Biomeの既定設定でコードを検証します"
+run = "biome lint .mise/tasks tests"
+
+[tasks.format]
+description = "Biomeの既定設定でファイルを整形します"
+run = "biome format --write .mise/tasks tests"

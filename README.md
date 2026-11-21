@@ -126,6 +126,13 @@ mise run check
 mise exec -- node --test tests/*.test.mts
 ```
 
+個別に検証または整形する場合は、次のタスクを使います。`format`は対象ファイルを書き換えます。
+
+```sh
+mise run lint
+mise run format
+```
+
 ## 作業用 worktree
 
 リポジトリの変更は、作業ごとに `.worktree/` 内の worktree で進めます。作業中の AI はブランチ名を決め、次のタスクを呼び出します。
