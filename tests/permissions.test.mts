@@ -30,6 +30,8 @@ test("公開タスクだけが実行権限を持つ", {
 		"mdw/review/check.mts",
 		"mdw/review/security.mts",
 		"mdw/review/quality.mts",
+		"mdw/review/judge.mts",
+		"mdw/review/post.mts",
 	]) {
 		assert.notEqual(fs.statSync(path.join(root, file)).mode & 0o111, 0, file);
 	}

@@ -64,6 +64,7 @@ export async function prepare(options = {}) {
 	fs.mkdirSync(common.output, { recursive: true });
 	for (const name of [
 		"merged.json",
+		"judged.json",
 		"security.json",
 		"quality.json",
 		"manifest.json",

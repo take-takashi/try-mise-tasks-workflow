@@ -298,9 +298,9 @@ export function timeoutSeconds(env = process.env) {
 		);
 	return Number(raw);
 }
-export async function check() {
+export async function check(reviewers = Object.keys(roles)) {
 	timeoutSeconds();
-	for (const role of Object.keys(roles)) {
+	for (const role of reviewers) {
 		const { provider, billing, executable } = config(role);
 		const env = childEnvironment(provider, billing);
 		if (provider === "codex") {
@@ -334,37 +334,12 @@ export async function check() {
 	}
 }
 
-export async function review(role, manifest) {
-	const started = performance.now();
-	const { provider, model, effort, billing, executable } = config(role);
+export async function runStructuredAgent(settings, prompt, schema, cwd = root) {
+	const { provider, model, effort, billing, executable } = settings;
 	const env = childEnvironment(provider, billing);
-	const before = manifest.merge_base_commit,
-		after = manifest.head_commit;
-	const prompt =
-		"コミット " +
-		before +
-		" から " +
-		after +
-		" までの変更を、" +
-		roles[role] +
-		"の観点でレビューしてください。\n" +
-		"変更ファイルの一覧（binaryはGitがバイナリーと判定したファイル）: " +
-		JSON.stringify(manifest.changed_files) +
-		"\n" +
-		"まず git diff --no-ext-diff --no-textconv --no-renames " +
-		before +
-		" " +
-		after +
-		" -- でコミット間の差分を確認し、" +
-		"必要な場合は git show <コミットID>:<パス> を使って変更前後の内容、周辺コードやテストを確認してください。" +
-		"作業ツリーやインデックスの未コミット変更をレビュー対象に含めないでください。" +
-		"一覧のすべてのファイルについて、file_coverageにfile、確認できたかを示すstatus（reviewedまたはunreadable）、確認方法または確認できなかった理由を示すdetailを記録してください。" +
-		"Gitがバイナリーと扱う場合は差分だけで判断せず、可能ならコミット内の内容を取得して確認してください。" +
-		"テキストの文字コードが異なる場合も可能な範囲で確認してください。" +
-		"読み取れないファイル、ツールの権限や出力制限などで確認できなかった範囲はlimitationsに記載し、確認できなかったものを確認済みとして扱わないでください。" +
-		"確認できなかった範囲がなければlimitationsは空配列としてください。変更に起因する具体的な問題だけを報告し、該当しなければfindingsを空配列にしてください。ファイルを変更せず、日本語で出力してください。";
 	const timeout = timeoutSeconds();
 	let data: ReturnType<typeof readJson>;
+	let permissionDenials = 0;
 	if (provider === "codex") {
 		const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "mdw-review-"));
 		try {
@@ -391,7 +366,7 @@ export async function review(role, manifest) {
 					resultFile,
 					"-",
 				],
-				{ env, input: prompt, timeout },
+				{ cwd, env, input: prompt, timeout },
 			);
 			data = readJson(resultFile);
 		} finally {
@@ -418,7 +393,7 @@ export async function review(role, manifest) {
 				"--json-schema",
 				JSON.stringify(schema),
 			],
-			{ env, input: prompt, timeout },
+			{ cwd, env, input: prompt, timeout },
 		);
 		let envelope: {
 			is_error?: boolean;
@@ -433,16 +408,51 @@ export async function review(role, manifest) {
 		if (!envelope || envelope.is_error || !("structured_output" in envelope))
 			throw new Error("Claudeの構造化出力がありません。");
 		data = envelope.structured_output;
-		if (envelope.permission_denials?.length) {
-			validateReview(data);
-			data.limitations.push(
-				"Claudeのツール使用が" +
-					envelope.permission_denials.length +
-					"件拒否されました。",
-			);
-		}
+		permissionDenials = envelope.permission_denials?.length ?? 0;
 	}
+	return { data, permissionDenials };
+}
+
+export async function review(role, manifest) {
+	const started = performance.now();
+	const settings = config(role);
+	const { provider, model, effort, billing } = settings;
+	const before = manifest.merge_base_commit,
+		after = manifest.head_commit;
+	const prompt =
+		"コミット " +
+		before +
+		" から " +
+		after +
+		" までの変更を、" +
+		roles[role] +
+		"の観点でレビューしてください。\n" +
+		"変更ファイルの一覧（binaryはGitがバイナリーと判定したファイル）: " +
+		JSON.stringify(manifest.changed_files) +
+		"\n" +
+		"まず git diff --no-ext-diff --no-textconv --no-renames " +
+		before +
+		" " +
+		after +
+		" -- でコミット間の差分を確認し、" +
+		"必要な場合は git show <コミットID>:<パス> を使って変更前後の内容、周辺コードやテストを確認してください。" +
+		"作業ツリーやインデックスの未コミット変更をレビュー対象に含めないでください。" +
+		"一覧のすべてのファイルについて、file_coverageにfile、確認できたかを示すstatus（reviewedまたはunreadable）、確認方法または確認できなかった理由を示すdetailを記録してください。" +
+		"Gitがバイナリーと扱う場合は差分だけで判断せず、可能ならコミット内の内容を取得して確認してください。" +
+		"テキストの文字コードが異なる場合も可能な範囲で確認してください。" +
+		"読み取れないファイル、ツールの権限や出力制限などで確認できなかった範囲はlimitationsに記載し、確認できなかったものを確認済みとして扱わないでください。" +
+		"確認できなかった範囲がなければlimitationsは空配列としてください。変更に起因する具体的な問題だけを報告し、該当しなければfindingsを空配列にしてください。ファイルを変更せず、日本語で出力してください。";
+	const { data, permissionDenials } = await runStructuredAgent(
+		settings,
+		prompt,
+		schema,
+	);
 	validateReview(data);
+	if (permissionDenials) {
+		data.limitations.push(
+			`Claudeのツール使用が${permissionDenials}件拒否されました。`,
+		);
+	}
 	const expected = new Set(manifest.changed_files.map((item) => item.path));
 	const coverage = new Map(data.file_coverage.map((item) => [item.file, item]));
 	if (coverage.size !== data.file_coverage.length)
