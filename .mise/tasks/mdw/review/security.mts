@@ -1,0 +1,28 @@
+#!/usr/bin/env node
+//MISE description="セキュリティの観点でコミットをレビューする"
+//USAGE flag "--base <ref>" help="比較元のブランチまたはコミット" default="main"
+//USAGE flag "--head <ref>" help="レビュー対象のブランチまたはコミット" default="HEAD"
+import { cli } from "../_lib/cli.mts";
+import { check, review } from "../_lib/common.mts";
+import { prepare } from "../_lib/review-steps.mts";
+
+export async function run(options = {}) {
+	// レビューするコミットと変更ファイルを固定する。
+	const manifest = await prepare(options);
+	// レビューに使う AI CLI の設定と認証を確認する。
+	await check();
+	// 認証や入力処理などの安全性を確認する。
+	return review("security", manifest);
+}
+
+// タスクファイルを実行したときに run() を呼び出す。import ではレビューを開始しない。
+if (import.meta.main) {
+	// ヘルプの表示と、失敗時の終了コードの設定を cli() に任せる。
+	await cli(
+		"セキュリティの観点でレビューします。",
+		// mise が渡した --base と --head を使ってレビューを開始する。
+		() =>
+			run({ baseRef: process.env.usage_base, headRef: process.env.usage_head }),
+		{ usage: true },
+	);
+}

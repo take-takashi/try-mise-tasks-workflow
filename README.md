@@ -7,7 +7,7 @@ MDWは、miseのファイルタスクを公開入口にして、組み合わせ�
 ## 事前準備
 
 - mise、Git、利用するCodex CLIまたはClaude Code CLIをインストールし、各CLIでログインしてください。
-- `mise install`でNode.js 24の最新版を用意してください。初回はmiseによるプロジェクト設定の信頼確認が表示される場合があります。
+- `mise install`でNode.js 24とBiomeの最新版を用意してください。初回はmiseによるプロジェクト設定の信頼確認が表示される場合があります。
 - レビュー対象の変更をコミットしてください。既定では`main`と`HEAD`の共通祖先から`HEAD`までのコミット済みの変更を対象とし、未コミットの変更を含めないよう各CLIへ依頼します。
 - AIのサービスへ差分が送信されるため、送信してよい内容かを確認してください。
 
@@ -24,13 +24,25 @@ mise run mdw:review --base origin/main --head HEAD
 
 旧`awf:*`タスクは`mdw:*`へ統合しました。たとえば、`awf:review`は`mdw:review`に、`awf:check`は`mdw:check`に変更してください。
 
-別のワークフローからは、`.mise/tasks/mdw/_lib/review.mjs`の`run()`を相対パスでimportして呼び出せます。`run()`は集約結果をオブジェクトとして返し、ファイルへの保存も行います。`run({ baseRef, headRef })`でレビュー対象を指定でき、対象の固定だけが必要な場合は`prepare()`を呼び出せます。
+レビューの流れは `.mise/tasks/mdw/review.mts` の `run()` に記述しています。別のワークフローからは、`.mise/tasks/mdw/_lib/review.mts`の`run()`を相対パスでimportして呼び出せます。`run()`は集約結果をオブジェクトとして返し、ファイルへの保存も行います。`run({ baseRef, headRef })`でレビュー対象を指定でき、対象の固定だけが必要な場合は`prepare()`を呼び出せます。
 
 `mise run mdw:check`では、レビューで利用するCLIの設定と認証だけを確認できます。モデルを実際に利用できるかどうかは、レビュー実行時に各CLIが判断します。
 
 出力先とレビュー対象は、`mise run mdw:review`を実行した場所のGit worktreeのルートです。worktreeのサブフォルダーから実行しても、そのworktree内の`.reviews/`に出力します。
 
 `--base`にはPRのベースとなるブランチまたはコミットを、`--head`にはレビュー対象のブランチまたはコミットを指定できます。既定値はそれぞれ`main`と`HEAD`です。ベースとヘッドの共通祖先からヘッドまでを比較するため、PRのベースブランチに合わせて`origin/main`などを指定してください。必要なコミット履歴がローカルにない場合は、あらかじめ取得してください。`MDW_REVIEW_TIMEOUT_SECONDS`で各CLIのタイムアウトを秒単位で変更できます。既定値は600秒です。実行前に以前の成果物を削除するため、レビューが失敗した場合、以前の`merged.json`は残りません。レビュー結果には機密情報が含まれる可能性があります。
+
+## 指摘の評価と PR への投稿
+
+レビューを実行した worktree で、集約済みの指摘を Judge に渡します。Judge は対象の差分と照らし合わせて各指摘を採用、棄却、根拠不足、重複のいずれかに分類し、判定の根拠を `.reviews/judged.json` に保存します。モデル設定は `MDW_REVIEW_JUDGE_PROVIDER`、`MDW_REVIEW_JUDGE_MODEL`、`MDW_REVIEW_JUDGE_EFFORT`、`MDW_REVIEW_JUDGE_BILLING` で上書きできます。指摘がなければ AI CLI は起動しません。
+
+```sh
+mise run mdw:review:judge
+mise run mdw:review:post --dry-run
+mise run mdw:review:post --pr https://github.com/OWNER/REPO/pull/123
+```
+
+投稿タスクには、対象リポジトリでレビューを投稿できる認証済みの `gh` が必要です。PR のベースとヘッドが評価時のコミットに一致することを確認し、採用した指摘だけを対象コミットに紐づくレビューコメントとして投稿します。同じ本文を同じコミットに投稿済みの場合は、そのレビューの URL を返します。ベースかヘッドが変わった場合は、PR の現在のコミットを指定してレビューと評価をやり直してください。
 
 ## プロバイダーとモデルの設定
 
@@ -81,9 +93,9 @@ Claude APIを使う場合は`MDW_REVIEW_SECURITY_BILLING=api`を指定し、秘�
 }
 ```
 
-各`target`には、実際には上位の`target`と同じ値が入ります。共通スキーマは`mdw/_lib/common.mjs`に含まれます。プログラム側では、このスキーマで使用する必須フィールド、型、列挙値、最小値と余分なフィールドを個別に検証します。汎用のJSON Schema検証器ではないため、スキーマを変更するときは検証も更新してください。
+各`target`には、実際には上位の`target`と同じ値が入ります。共通スキーマは`mdw/_lib/common.mts`に含まれます。プログラム側では、このスキーマで使用する必須フィールド、型、列挙値、最小値と余分なフィールドを個別に検証します。汎用のJSON Schema検証器ではないため、スキーマを変更するときは検証も更新してください。
 
-Codexには読み取り専用のサンドボックスを指定し、Claudeにはファイル検索・読み取りとBashのツールを許可して、planモードで起動します。コミットIDを使って差分とファイルを調べるよう依頼しますが、作業ツリーのファイルを読めないように隔離するものではありません。CLI自身の設定、フック、プラグイン、管理者設定なども完全には隔離しません。CLIのツールが読めない文字コードや、Gitがバイナリーと扱うファイルがある場合、モデルによって確認の可否が異なります。`limitations`はモデルの申告であり、すべての確認漏れを自動検知するものではありません。Judgeによる重複・矛盾の判断と、その効果の比較は今後の検証です。
+Codexには読み取り専用のサンドボックスを指定し、Claudeにはファイル検索・読み取りとBashのツールを許可して、planモードで起動します。コミットIDを使って差分とファイルを調べるよう依頼しますが、作業ツリーのファイルを読めないように隔離するものではありません。CLI自身の設定、フック、プラグイン、管理者設定なども完全には隔離しません。CLIのツールが読めない文字コードや、Gitがバイナリーと扱うファイルがある場合、モデルによって確認の可否が異なります。`limitations`はモデルの申告であり、すべての確認漏れを自動検知するものではありません。Judgeによる判定の精度と効果は今後の検証項目です。
 
 Python版ではmacOS上でCodexのChatGPT認証を用いた実接続を確認しました。Node.js版は代替CLIを用いてCodexとClaudeの並列実行、設定と集約を検証しています。Node.js版の実接続、WindowsとLinuxでの動作、Claude APIの課金先は未検証です。
 
@@ -107,8 +119,35 @@ mise run docs:validate
 
 別のプロジェクトでは`.mise/tasks/docs/`をコピーし、miseとNode.js 24を利用できるようにしてください。macOS / Linuxでは、公開するタスクの実行権限を保持してください。コピー先の`docs/decisions/`も上記の形式に従う必要があります。Windowsでの動作は未検証です。
 
-Node.jsへの移行と部品の配置については[ADR 0002](docs/decisions/0002-node-workflow-runtime.md)に記録しています。macOSまたはLinuxで、コピー後のタスク、miseによるタスクの検出とレビューの集約を次のコマンドで検証できます。
+Node.jsへの移行と部品の配置については[ADR 0002](docs/decisions/0002-node-workflow-runtime.md)に記録しています。macOSまたはLinuxで、Biomeの既定設定による検証と、コピー後のタスク、miseによるタスクの検出およびレビューの集約を次のコマンドで確認できます。
 
 ```text
-mise exec -- node --test tests/*.test.mjs
+mise run check
+mise exec -- node --test tests/*.test.mts
 ```
+
+## 作業用 worktree
+
+リポジトリの変更は、作業ごとに `.worktree/` 内の worktree で進めます。作業中の AI はブランチ名を決め、次のタスクを呼び出します。
+
+```sh
+mise run mdw:worktree:new --branch feat/passkey-login
+```
+
+シェルから作業内容を渡すと、MDW が AI CLI を呼び出してブランチ名を決めます。
+
+```sh
+mise run mdw:worktree:new "パスキー認証を追加する"
+```
+
+ブランチ名は `feat`、`fix`、`refactor`、`docs`、`test`、`chore`、`perf`、`build`、`ci`、`revert` のいずれかと、英小文字・数字・ハイフンによる説明を組み合わせます。名前が重複した場合は末尾に番号を付けます。AI の設定には `MDW_DEFAULT_PROVIDER`、`MDW_DEFAULT_MODEL`、`MDW_DEFAULT_EFFORT`、`MDW_DEFAULT_BILLING` を使用します。`MDW_WORKTREE_PROVIDER` などの `MDW_WORKTREE_` 設定で上書きできます。
+
+作成タスクは `main` の追跡先から取得し、fast-forward で更新できる場合は `main` を更新します。ローカルの未プッシュのコミットは保持し、履歴が分岐した場合や更新を妨げる変更がある場合は中断します。作成結果は `branch`、`path`、`base_commit` を含む JSON です。`path` は絶対パスです。
+
+マージ後は、対象の worktree の外から次のタスクを実行します。
+
+```sh
+mise run mdw:worktree:cleanup /絶対パス/.worktree/feat-passkey-login
+```
+
+クリーンアップは未コミット、未追跡、Git が無視するファイルがないことを確認します。通常マージは Git の履歴で確認し、squash merge は `gh` CLI で取得したマージ済み PR と差分を照合します。差分が一致しない場合など、マージ済みと確認できないときは削除しません。タスクはコミット、プッシュ、PR の作成、マージを行いません。親シェルのカレントディレクトリは変更できないため、対象の外から実行してください。
