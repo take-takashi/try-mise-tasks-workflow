@@ -2,35 +2,41 @@
 //MISE description="MDWのレビュー ワークフローを実行する"
 //USAGE flag "--base <ref>" help="比較元のブランチまたはコミット" default="main"
 //USAGE flag "--head <ref>" help="レビュー対象のブランチまたはコミット" default="HEAD"
+
+import { AgentClient } from "./_lib/agent-client.mts";
 import { cli } from "./_lib/cli.mts";
-import { check, review } from "./_lib/common.mts";
 import {
 	prepare,
 	requireReviewResult,
 	saveReviewSummary,
 	summarizeReviews,
 } from "./_lib/review-steps.mts";
+import { ReviewWorkspace } from "./_lib/review-workspace.mts";
+import { review } from "./_lib/reviewer.mts";
 
 export async function run(options = {}) {
+	// 実行する worktree と AI CLI の実行環境を用意する。
+	const workspace = await ReviewWorkspace.discover(options.cwd);
+	const agent = new AgentClient({ cwd: workspace.root });
 	// 両方のレビューが同じ差分を見るように、対象のコミットと変更ファイルを固定する。
-	const manifest = await prepare(options);
+	const manifest = await prepare(options, workspace);
 	// レビューに使う AI CLI の設定と認証を確認する。
-	await check();
+	await agent.check();
 
 	// 二つのレビューを並列に実行し、両方の成否が確定するまで待つ。
 	const outcomes = await Promise.allSettled([
 		// 認証や入力処理などの安全性を確認する。
-		review("security", manifest),
+		review("security", manifest, workspace, agent),
 		// 変更の正しさやテストの不足を確認する。
-		review("quality", manifest),
+		review("quality", manifest, workspace, agent),
 	]);
 
 	// 失敗したレビューがあれば、エラーにして集約を中断する。
 	const reviews = outcomes.map(requireReviewResult);
 	// 対象が一致することを確かめ、観点ごとの結果をまとめる。
-	const result = summarizeReviews(manifest, reviews);
+	const result = summarizeReviews(manifest, reviews, workspace);
 	// 集約結果を .reviews/merged.json に保存する。
-	const file = saveReviewSummary(result);
+	const file = saveReviewSummary(result, workspace);
 	// 保存先とレビュー全体の所要時間を表示する。
 	console.log(
 		`集約結果を保存しました: ${file}（全体: ${result.duration_seconds.toFixed(3)}秒）`,
