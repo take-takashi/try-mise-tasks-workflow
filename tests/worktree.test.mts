@@ -194,12 +194,12 @@ test("自然文から Codex と Claude の出力を使ってブランチ名を�
 	fs.mkdirSync(bin);
 	fs.writeFileSync(
 		path.join(bin, "codex"),
-		'#!/usr/bin/env node\nconst fs = require("node:fs"); const args = process.argv; fs.writeFileSync(args[args.indexOf("-o") + 1], JSON.stringify({branch:"feat/codex-name"}));\n',
+		'#!/usr/bin/env node\nconst fs = require("node:fs"); const args = process.argv; if (args[2] === "login") { console.log("Logged in using ChatGPT"); process.exit(0); } fs.writeFileSync(args[args.indexOf("-o") + 1], JSON.stringify({branch:"feat/codex-name"}));\n',
 		{ mode: 0o755 },
 	);
 	fs.writeFileSync(
 		path.join(bin, "claude"),
-		'#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({structured_output:{branch:"fix/claude-name"}}));\n',
+		'#!/usr/bin/env node\nif (process.argv[2] === "auth") { console.log(JSON.stringify({authMethod:"claude.ai"})); process.exit(0); } process.stdout.write(JSON.stringify({structured_output:{branch:"fix/claude-name"}}));\n',
 		{ mode: 0o755 },
 	);
 	const keys = ["PATH", "MDW_WORKTREE_PROVIDER", "MDW_WORKTREE_BILLING"];
