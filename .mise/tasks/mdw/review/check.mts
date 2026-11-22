@@ -1,7 +1,7 @@
 #!/usr/bin/env node
+import { check } from "../_lib/agent-client.mts";
 //MISE description="レビューの設定と認証を確認する"
 import { cli } from "../_lib/cli.mts";
-import { check } from "../_lib/common.mts";
 
 // タスクファイルを実行したときに AI CLI の設定と認証を確認する。
 if (import.meta.main) {

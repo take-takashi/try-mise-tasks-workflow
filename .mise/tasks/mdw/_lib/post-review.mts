@@ -1,4 +1,4 @@
-import { runCommand } from "./common.mts";
+import { runCommand } from "./command.mts";
 
 const pullRequestPattern =
 	/^https:\/\/github\.com\/([a-z0-9][a-z0-9-]*)\/([a-z0-9_.-]+)\/pull\/([1-9][0-9]*)$/i;

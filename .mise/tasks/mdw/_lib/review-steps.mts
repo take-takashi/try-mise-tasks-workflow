@@ -1,15 +1,19 @@
 import { randomUUID } from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
 import { isDeepStrictEqual, TextDecoder } from "node:util";
-import * as common from "./common.mts";
+import { AgentClient } from "./agent-client.mts";
+import { runCommand } from "./command.mts";
+import { roles, validateReview } from "./review-data.mts";
+import { ReviewWorkspace } from "./review-workspace.mts";
+import { review } from "./reviewer.mts";
 
 export async function runRole(role, options = {}) {
-	if (!Object.hasOwn(common.roles, role))
+	if (!Object.hasOwn(roles, role))
 		throw new Error("不明なレビューの観点です: " + role);
-	const manifest = await prepare(options);
-	await common.check();
-	return common.review(role, manifest);
+	const workspace = await ReviewWorkspace.discover(options.cwd);
+	const agent = new AgentClient({ cwd: workspace.root });
+	const manifest = await prepare(options, workspace);
+	await agent.check();
+	return review(role, manifest, workspace, agent);
 }
 
 const monotonicSeconds = () => Number(process.hrtime.bigint()) / 1e9;
@@ -46,7 +50,7 @@ function decodePath(bytes) {
 	}
 }
 
-export async function prepare(options = {}) {
+export async function prepare(options = {}, workspace?: ReviewWorkspace) {
 	const baseRef = options.baseRef ?? "main";
 	const headRef = options.headRef ?? "HEAD";
 	if (
@@ -59,24 +63,14 @@ export async function prepare(options = {}) {
 			"baseRef と headRef には空でないコミットまたはブランチを指定してください。",
 		);
 	}
-	await common.initializeRoot();
+	workspace ??= await ReviewWorkspace.discover(options.cwd);
 	const started = monotonicSeconds();
-	fs.mkdirSync(common.output, { recursive: true });
-	for (const name of [
-		"merged.json",
-		"judged.json",
-		"security.json",
-		"quality.json",
-		"manifest.json",
-		"diff.txt",
-	]) {
-		fs.rmSync(path.join(common.output, name), { force: true });
-	}
+	workspace.reset();
 	const rev = async (ref) =>
 		(
-			await common.runCommand(
+			await runCommand(
 				["git", "rev-parse", "--verify", "--end-of-options", ref + "^{commit}"],
-				{ timeout: 30 },
+				{ cwd: workspace.root, timeout: 30 },
 			)
 		).stdout
 			.toString("utf8")
@@ -84,12 +78,15 @@ export async function prepare(options = {}) {
 	const base = await rev(baseRef),
 		head = await rev(headRef);
 	const mergeBase = (
-		await common.runCommand(["git", "merge-base", base, head], { timeout: 30 })
+		await runCommand(["git", "merge-base", base, head], {
+			cwd: workspace.root,
+			timeout: 30,
+		})
 	).stdout
 		.toString("utf8")
 		.trim();
 	const diff = (
-		await common.runCommand(
+		await runCommand(
 			[
 				"git",
 				"diff",
@@ -102,7 +99,7 @@ export async function prepare(options = {}) {
 				head,
 				"--",
 			],
-			{ timeout: 30 },
+			{ cwd: workspace.root, timeout: 30 },
 		)
 	).stdout;
 	if (!diff.length)
@@ -137,16 +134,16 @@ export async function prepare(options = {}) {
 		changed_files: files,
 		started_monotonic: started,
 	};
-	common.writeJson(path.join(common.output, "manifest.json"), manifest);
+	workspace.write("manifest.json", manifest);
 	return manifest;
 }
 
-export function collect(manifest) {
-	const reviews = Object.keys(common.roles).map((role) =>
-		common.readJson(path.join(common.output, `${role}.json`)),
+export function collect(manifest, workspace: ReviewWorkspace) {
+	const reviews = Object.keys(roles).map((role) =>
+		workspace.read(`${role}.json`),
 	);
-	const result = summarizeReviews(manifest, reviews);
-	saveReviewSummary(result);
+	const result = summarizeReviews(manifest, reviews, workspace);
+	saveReviewSummary(result, workspace);
 	return result;
 }
 
@@ -155,8 +152,12 @@ export function requireReviewResult(outcome) {
 	return outcome.value;
 }
 
-export function summarizeReviews(manifest, reviews) {
-	for (const [index, role] of Object.keys(common.roles).entries()) {
+export function summarizeReviews(
+	manifest,
+	reviews,
+	workspace: ReviewWorkspace,
+) {
+	for (const [index, role] of Object.keys(roles).entries()) {
 		const item = reviews[index];
 		if (
 			!item ||
@@ -164,14 +165,9 @@ export function summarizeReviews(manifest, reviews) {
 			!isDeepStrictEqual(item.target, manifest)
 		)
 			throw new Error(`${role} の結果が今回のレビューと一致しません。`);
-		common.validateReview(item.review);
+		validateReview(item.review);
 	}
-	if (
-		!isDeepStrictEqual(
-			common.readJson(path.join(common.output, "manifest.json")),
-			manifest,
-		)
-	)
+	if (!isDeepStrictEqual(workspace.read("manifest.json"), manifest))
 		throw new Error("集約前にレビューの対象が変更されました。");
 	return {
 		target: manifest,
@@ -182,8 +178,6 @@ export function summarizeReviews(manifest, reviews) {
 	};
 }
 
-export function saveReviewSummary(result) {
-	const file = path.join(common.output, "merged.json");
-	common.writeJson(file, result);
-	return file;
+export function saveReviewSummary(result, workspace: ReviewWorkspace) {
+	return workspace.write("merged.json", result);
 }

@@ -2,7 +2,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { childEnvironment, runCommand, timeoutSeconds } from "./common.mts";
+import { childEnvironment, timeoutSeconds } from "./agent-client.mts";
+import { runCommand } from "./command.mts";
 
 const branchPattern =
 	/^(feat|fix|refactor|docs|test|chore|perf|build|ci|revert)\/[a-z0-9]+(?:-[a-z0-9]+)*$/;

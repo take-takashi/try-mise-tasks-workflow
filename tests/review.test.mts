@@ -8,11 +8,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
 	childEnvironment,
 	resolveReviewSetting,
-	runCommand,
 	timeoutSeconds,
-	validateReview,
-} from "../.mise/tasks/mdw/_lib/common.mts";
+} from "../.mise/tasks/mdw/_lib/agent-client.mts";
+import { runCommand } from "../.mise/tasks/mdw/_lib/command.mts";
 import { prepare, runRole } from "../.mise/tasks/mdw/_lib/review.mts";
+import { validateReview } from "../.mise/tasks/mdw/_lib/review-data.mts";
 
 const project = fileURLToPath(new URL("../", import.meta.url));
 function command(file, args, options) {
