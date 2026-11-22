@@ -24,6 +24,7 @@ test("公開タスクだけが実行権限を持つ", {
 		"docs/validate.mts",
 		"mdw/check.mts",
 		"mdw/interview.mts",
+		"mdw/intent.mts",
 		"mdw/worktree/new.mts",
 		"mdw/worktree/cleanup.mts",
 		"mdw/review.mts",
