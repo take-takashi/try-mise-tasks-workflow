@@ -32,6 +32,32 @@ mise run mdw:review --base origin/main --head HEAD
 
 `--base`にはPRのベースとなるブランチまたはコミットを、`--head`にはレビュー対象のブランチまたはコミットを指定できます。既定値はそれぞれ`main`と`HEAD`です。ベースとヘッドの共通祖先からヘッドまでを比較するため、PRのベースブランチに合わせて`origin/main`などを指定してください。必要なコミット履歴がローカルにない場合は、あらかじめ取得してください。`MDW_REVIEW_TIMEOUT_SECONDS`で各CLIのタイムアウトを秒単位で変更できます。既定値は600秒です。実行前に以前の成果物を削除するため、レビューが失敗した場合、以前の`merged.json`は残りません。レビュー結果には機密情報が含まれる可能性があります。
 
+## Interview: 対話から intent を作る
+
+`mdw:interview` は、プロジェクトの思想や目指す姿を一問ずつ掘り下げる、対話型のワークフローです。Codex CLI または Claude Code CLI にプロンプトを渡し、本人と認識が合った判断基準を、その場で `docs/intent.md` に反映するよう依頼します。端末で実行してください。
+
+```sh
+mise run mdw:interview
+```
+
+既存の `docs/intent.md` があれば、AI はそれを読んで会話を始めます。具体的な経験、理由、優先順位、例外を回答に応じて掘り下げ、記述案への同意を得た時点で保存します。話題の変更や終了は、会話の中で伝えられます。会話ログやセッションの要約はプロジェクトに作成しません。AI CLI 自身の会話履歴は、その CLI の設定に従います。
+
+intent には、目指すこと、大切にすることとその理由、状況に応じた判断基準、まだ決まっていないことを記載します。未確認の解釈を方針として保存したり、希望を禁止事項へ強めたりしないように指示しています。会話の進め方と記録のルールは [インタビュープロンプト](.mise/tasks/mdw/prompts/interview.md) で調整できます。記録の正しさや保存は AI が実行するため、実際の差分も確認してください。
+
+既存の AI チャットで使う場合は、プロンプトだけを取得して渡せます。プロンプトの出力では AI CLI のインストールや認証は不要で、intent も作成・変更しません。対象の worktree で会話を進めるようにしてください。
+
+```sh
+mise run mdw:interview --prompt
+```
+
+実行場所が属する worktree のルートで AI CLI を起動するため、サブフォルダーから実行しても intent の相対パスは変わりません。ファイルを変更する場合は、対象プロジェクトの作業用 worktree の規約に従います。このプロジェクトでは作業用 worktree で実行してください。
+
+AI の設定は `MDW_INTERVIEW_PROVIDER`、`MDW_INTERVIEW_MODEL`、`MDW_INTERVIEW_EFFORT`、`MDW_INTERVIEW_BILLING` を使い、未指定の項目には対応する `MDW_DEFAULT_*` を使います。Claude を使う場合は、プロバイダーと併せて Claude に対応するモデルを指定してください。認証と権限の確認には、対話型 CLI の通常の仕組みを使います。Codex は `workspace-write` と `on-request` で起動し、Claude の権限設定は CLI に従います。
+
+intent は、後の AI が設計・実装・提案に迷ったときの判断材料です。対象プロジェクトの AI 向け指示には「`docs/intent.md` が存在する場合は、判断の前に読み、明示された要件や上位の指示を優先する。適用する条件が不明な場合は本人に確認する」と記載してください。生成される `AGENTS.md` を使う場合は、その生成元へ追記してください。このタスクは `AGENTS.md` を変更しません。
+
+代替 CLI を使ってプロンプトの受け渡しと起動を検証しています。実際の AI との対話、質問の深さ、intent の更新品質は試用時の確認項目です。
+
 ## 指摘の評価と PR への投稿
 
 レビューを実行した worktree で、集約済みの指摘を Judge に渡します。Judge は対象の差分と照らし合わせて各指摘を採用、棄却、根拠不足、重複のいずれかに分類し、判定の根拠を `.reviews/judged.json` に保存します。モデル設定は `MDW_REVIEW_JUDGE_PROVIDER`、`MDW_REVIEW_JUDGE_MODEL`、`MDW_REVIEW_JUDGE_EFFORT`、`MDW_REVIEW_JUDGE_BILLING` で上書きできます。指摘がなければ AI CLI は起動しません。
