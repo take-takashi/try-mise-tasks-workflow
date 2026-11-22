@@ -2,12 +2,9 @@
 //MISE description="対話を通じてプロジェクトの intent を作成・更新する"
 //USAGE flag "--prompt" help="AI CLI を起動せず、プロンプトだけを出力する"
 
-import {
-	buildPrompt,
-	discoverRoot,
-	interviewCommand,
-	runInteractive,
-} from "./_lib/interview.mts";
+import { AgentClient } from "./_lib/agent-client.mts";
+import { requireInteractiveTerminal } from "./_lib/command.mts";
+import { buildPrompt, discoverRoot } from "./_lib/interview.mts";
 
 export async function run({
 	cwd = process.env.MISE_ORIGINAL_CWD || process.cwd(),
@@ -23,10 +20,20 @@ export async function run({
 		console.log(prompt);
 		return 0;
 	}
-	// プロバイダーとモデルを選び、対話用の起動引数を組み立てる。
-	const command = interviewCommand(prompt, environment);
+	// 対話に必要な端末があることを CLI の起動前に確認する。
+	requireInteractiveTerminal();
+	// 共通の AI クライアントで interview の設定と実行環境を用意する。
+	const agent = new AgentClient({
+		cwd: root,
+		environment,
+		workflow: "interview",
+	});
+	// プロバイダー、モデル、課金方式、エフォートと CLI の場所を確認する。
+	const settings = agent.config();
+	// 指定した課金方式と CLI の認証状態が一致することを確認する。
+	await agent.check();
 	// 人が応答できるように端末を引き継ぎ、会話の終了まで待つ。
-	return await runInteractive(command, root);
+	return await agent.runInteractive(settings, prompt);
 }
 
 // mise が渡した引数を読み取り、対話またはプロンプト出力の入口として実行する。

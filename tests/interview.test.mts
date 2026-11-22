@@ -5,10 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import {
-	buildPrompt,
-	interviewCommand,
-} from "../.mise/tasks/mdw/_lib/interview.mts";
+import { AgentClient } from "../.mise/tasks/mdw/_lib/agent-client.mts";
+import { buildPrompt } from "../.mise/tasks/mdw/_lib/interview.mts";
 
 const project = fileURLToPath(new URL("..", import.meta.url));
 const task = new URL("../.mise/tasks/mdw/interview.mts", import.meta.url).href;
@@ -59,7 +57,20 @@ test("コピー先でタスクを検出し、既存の intent を変更せずプ
 	assert.deepEqual(fs.readdirSync(path.join(root, "docs")), ["intent.md"]);
 });
 
-test("対話用の設定を優先し、API キーを適切な子プロセスにだけ渡す", () => {
+test("対話用の設定を優先し、API キーを適切な子プロセスにだけ渡す", (t) => {
+	const root = fixture(t);
+	const bin = path.join(root, "bin");
+	fs.mkdirSync(bin);
+	for (const provider of ["codex", "claude"])
+		fs.writeFileSync(path.join(bin, provider), "", { mode: 0o755 });
+	const command = (environment) => {
+		const agent = new AgentClient({
+			cwd: root,
+			workflow: "interview",
+			environment: { ...environment, PATH: bin },
+		});
+		return agent.interactiveCommand(agent.config(), "prompt");
+	};
 	const env = {
 		MDW_DEFAULT_PROVIDER: "codex",
 		MDW_DEFAULT_MODEL: "default-model",
@@ -71,8 +82,8 @@ test("対話用の設定を優先し、API キーを適切な子プロセスに�
 		MDW_ANTHROPIC_API_KEY: "test-key",
 		OPENAI_API_KEY: "unrelated-key",
 	};
-	const claude = interviewCommand("prompt", env);
-	assert.equal(claude.provider, "claude");
+	const claude = command(env);
+	assert.equal(claude.executable, path.join(bin, "claude"));
 	assert.deepEqual(claude.args, [
 		"--effort",
 		"high",
@@ -84,11 +95,11 @@ test("対話用の設定を優先し、API キーを適切な子プロセスに�
 	assert.equal(claude.env.MDW_ANTHROPIC_API_KEY, undefined);
 	assert.equal(claude.env.OPENAI_API_KEY, undefined);
 	assert.equal(env.MDW_ANTHROPIC_API_KEY, "test-key");
-	const codex = interviewCommand("prompt", {
+	const codex = command({
 		MDW_DEFAULT_MODEL: "default-model",
 		MDW_DEFAULT_EFFORT: "low",
 	});
-	assert.equal(codex.provider, "codex");
+	assert.equal(codex.executable, path.join(bin, "codex"));
 	assert.equal(codex.args[codex.args.indexOf("--model") + 1], "default-model");
 	assert.ok(codex.args.includes('model_reasoning_effort="low"'));
 	assert.ok(!codex.args.includes("exec"));
@@ -98,7 +109,7 @@ test("対話用の設定を優先し、API キーを適切な子プロセスに�
 		{ MDW_INTERVIEW_BILLING: "api" },
 		{ MDW_INTERVIEW_EFFORT: "invalid" },
 	])
-		assert.throws(() => interviewCommand("prompt", settings));
+		assert.throws(() => command(settings));
 });
 
 test("CLI に worktree のルートとプロンプトを渡し、終了コードを返す", (t) => {
@@ -109,6 +120,8 @@ test("CLI に worktree のルートとプロンプトを渡し、終了コード
 		fs.writeFileSync(
 			path.join(bin, provider),
 			`#!/usr/bin/env node
+if (process.argv[2] === "login") { console.log("Logged in using ChatGPT"); process.exit(0); }
+if (process.argv[2] === "auth") { console.log(JSON.stringify({authMethod:"claude.ai"})); process.exit(0); }
 console.log(JSON.stringify({cwd:process.cwd(),args:process.argv.slice(2),key:process.env.OPENAI_API_KEY}));
 process.exitCode = 7;
 `,
@@ -140,7 +153,7 @@ process.exitCode = await run();`,
 			},
 		);
 		assert.equal(result.status, 7, result.stderr);
-		const received = JSON.parse(result.stdout);
+		const received = JSON.parse(result.stdout.trim().split("\n").at(-1));
 		assert.equal(fs.realpathSync(received.cwd), fs.realpathSync(root));
 		assert.equal(received.args.at(-1), buildPrompt());
 		assert.equal(received.key, undefined);

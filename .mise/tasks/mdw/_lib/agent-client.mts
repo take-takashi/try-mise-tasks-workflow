@@ -1,22 +1,30 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { runCommand } from "./command.mts";
+import { runCommand, runInteractiveCommand } from "./command.mts";
 import { readJson } from "./json.mts";
 import { roles } from "./review-data.mts";
 
-export function resolveReviewSetting(role, field, fallback, env = process.env) {
-	role = role.toUpperCase();
+function resolveSetting(workflow, role, field, fallback, env) {
+	const scope = workflow.toUpperCase();
 	field = field.toUpperCase();
-	for (const key of [
-		"MDW_REVIEW_" + role + "_" + field,
-		"AWF_REVIEW_" + role + "_" + field,
-		"MDW_REVIEW_" + field,
-		"MDW_DEFAULT_" + field,
-	]) {
-		if (typeof env[key] === "string" && env[key].trim()) return env[key];
+	const keys = [];
+	if (role) {
+		keys.push(`MDW_${scope}_${role.toUpperCase()}_${field}`);
+		if (workflow === "review")
+			keys.push(`AWF_REVIEW_${role.toUpperCase()}_${field}`);
+	}
+	keys.push(`MDW_${scope}_${field}`);
+	if (workflow === "review") keys.push(`AWF_REVIEW_${field}`);
+	keys.push(`MDW_DEFAULT_${field}`);
+	for (const key of keys) {
+		if (typeof env[key] === "string" && env[key].trim()) return env[key].trim();
 	}
 	return fallback;
+}
+
+export function resolveReviewSetting(role, field, fallback, env = process.env) {
+	return resolveSetting("review", role, field, fallback, env);
 }
 function executableOnPath(name, env, cwd) {
 	for (const dir of (env.PATH || "").split(path.delimiter)) {
@@ -28,19 +36,25 @@ function executableOnPath(name, env, cwd) {
 	}
 	throw new Error(name + " CLI が見つかりません。");
 }
-function config(role, env, cwd) {
-	const provider = resolveReviewSetting(role, "PROVIDER", "codex", env);
-	const model = resolveReviewSetting(role, "MODEL", "gpt-6.1-sol", env);
-	const effort = resolveReviewSetting(role, "EFFORT", "medium", env);
-	const billing = resolveReviewSetting(role, "BILLING", "subscription", env);
+function config(workflow, role, env, cwd) {
+	const setting = (field, fallback) =>
+		resolveSetting(workflow, role, field, fallback, env);
+	const scope = `MDW_${workflow.toUpperCase()}${role ? `_${role.toUpperCase()}` : ""}`;
+	const provider = setting("PROVIDER", "codex");
+	const model = setting(
+		"MODEL",
+		workflow === "interview" && provider === "claude"
+			? "sonnet"
+			: "gpt-6.1-sol",
+	);
+	const effort = setting("EFFORT", "medium");
+	const billing = setting("BILLING", "subscription");
 	if (
 		!["codex", "claude"].includes(provider) ||
 		!model ||
 		!["subscription", "api"].includes(billing)
 	)
-		throw new Error(
-			"MDW_REVIEW_" + role.toUpperCase() + "_* の設定が不正です。",
-		);
+		throw new Error(`${scope}_* の設定が不正です。`);
 	if (provider === "codex" && billing !== "subscription")
 		throw new Error("CodexのAPI課金はこのPoCでは対応していません。");
 	const allowed =
@@ -49,11 +63,7 @@ function config(role, env, cwd) {
 			: ["low", "medium", "high", "xhigh", "max", "ultracode"];
 	if (!allowed.includes(effort))
 		throw new Error(
-			"MDW_REVIEW_" +
-				role.toUpperCase() +
-				"_EFFORT は " +
-				provider +
-				" に対応する値を指定してください。",
+			`${scope}_EFFORT は ${provider} に対応する値を指定してください。`,
 		);
 	return {
 		provider,
@@ -104,25 +114,34 @@ export function timeoutSeconds(env = process.env) {
 // 一つの実行環境を保持し、認証確認と AI CLI の呼び出しに同じ設定を使う。
 export class AgentClient {
 	readonly cwd: string;
+	readonly workflow: string;
 	#environment;
 	#run;
+	#interactive;
 
 	constructor({
 		cwd = process.env.MISE_ORIGINAL_CWD || process.cwd(),
 		environment = process.env,
 		run = runCommand,
+		interactive = runInteractiveCommand,
+		workflow = "review",
 	} = {}) {
 		this.cwd = path.resolve(cwd);
 		this.#environment = { ...environment };
 		this.#run = run;
+		this.#interactive = interactive;
+		this.workflow = workflow;
 	}
 
 	config(role) {
-		return config(role, this.#environment, this.cwd);
+		return config(this.workflow, role, this.#environment, this.cwd);
 	}
 
-	async check(reviewers = Object.keys(roles)) {
-		timeoutSeconds(this.#environment);
+	async check(
+		reviewers = this.workflow === "review" ? Object.keys(roles) : [undefined],
+		{ log = console.log } = {},
+	) {
+		if (this.workflow !== "interview") timeoutSeconds(this.#environment);
 		for (const role of reviewers) {
 			const { provider, billing, executable } = this.config(role);
 			const env = childEnvironment(provider, billing, this.#environment);
@@ -157,11 +176,43 @@ export class AgentClient {
 						"Claudeの認証方式が指定した " + billing + " と一致しません。",
 					);
 			}
-			console.log(role + ": " + provider + " の設定と認証を確認しました。");
+			log(`${role ?? this.workflow}: ${provider} の設定と認証を確認しました。`);
 		}
 	}
 
-	async runStructured(settings, prompt, schema) {
+	interactiveCommand(settings, prompt) {
+		const { provider, model, effort, billing, executable } = settings;
+		const args =
+			provider === "codex"
+				? [
+						"--sandbox",
+						"workspace-write",
+						"--ask-for-approval",
+						"on-request",
+						"-c",
+						`model_reasoning_effort=${JSON.stringify(effort)}`,
+					]
+				: ["--effort", effort];
+		return {
+			executable,
+			args: [...args, "--model", model, prompt],
+			env: childEnvironment(provider, billing, this.#environment),
+		};
+	}
+
+	async runInteractive(settings, prompt) {
+		return await this.#interactive(
+			this.interactiveCommand(settings, prompt),
+			this.cwd,
+		);
+	}
+
+	async runStructured(
+		settings,
+		prompt,
+		schema,
+		{ tools = "Read,Grep,Glob,Bash" } = {},
+	) {
 		const { provider, model, effort, billing, executable } = settings;
 		const env = childEnvironment(provider, billing, this.#environment);
 		const timeout = timeoutSeconds(this.#environment);
@@ -209,7 +260,7 @@ export class AgentClient {
 					"--effort",
 					effort,
 					"--tools",
-					"Read,Grep,Glob,Bash",
+					tools,
 					"--permission-mode",
 					"plan",
 					"--strict-mcp-config",

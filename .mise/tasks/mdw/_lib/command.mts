@@ -64,3 +64,39 @@ export function runCommand(
 		child.stdin.end(input);
 	});
 }
+
+export function requireInteractiveTerminal() {
+	if (!process.stdin.isTTY || !process.stdout.isTTY)
+		throw new Error(
+			"対話には端末が必要です。プロンプトを取得する場合は --prompt を指定してください。",
+		);
+}
+
+export function runInteractiveCommand({ executable, args, env }, cwd: string) {
+	requireInteractiveTerminal();
+	return new Promise<number>((resolve, reject) => {
+		const child = spawn(executable, args, {
+			cwd,
+			env,
+			stdio: "inherit",
+			shell: false,
+		});
+		// 親だけに届いた中断も CLI に伝え、終了を待って終了コードを返す。
+		const interrupt = () => child.kill("SIGINT");
+		const terminate = () => child.kill("SIGTERM");
+		process.on("SIGINT", interrupt);
+		process.on("SIGTERM", terminate);
+		const cleanup = () => {
+			process.off("SIGINT", interrupt);
+			process.off("SIGTERM", terminate);
+		};
+		child.once("error", (error) => {
+			cleanup();
+			reject(new Error(`${executable} CLI を起動できません: ${error.message}`));
+		});
+		child.once("exit", (code, signal) => {
+			cleanup();
+			resolve(code ?? (signal === "SIGINT" ? 130 : 143));
+		});
+	});
+}

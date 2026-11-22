@@ -52,7 +52,7 @@ mise run mdw:interview --prompt
 
 実行場所が属する worktree のルートで AI CLI を起動するため、サブフォルダーから実行しても intent の相対パスは変わりません。ファイルを変更する場合は、対象プロジェクトの作業用 worktree の規約に従います。このプロジェクトでは作業用 worktree で実行してください。
 
-AI の設定は `MDW_INTERVIEW_PROVIDER`、`MDW_INTERVIEW_MODEL`、`MDW_INTERVIEW_EFFORT`、`MDW_INTERVIEW_BILLING` を使い、未指定の項目には対応する `MDW_DEFAULT_*` を使います。Claude を使う場合は、プロバイダーと併せて Claude に対応するモデルを指定してください。認証と権限の確認には、対話型 CLI の通常の仕組みを使います。Codex は `workspace-write` と `on-request` で起動し、Claude の権限設定は CLI に従います。
+AI の設定は `MDW_INTERVIEW_PROVIDER`、`MDW_INTERVIEW_MODEL`、`MDW_INTERVIEW_EFFORT`、`MDW_INTERVIEW_BILLING` を使い、未指定の項目には対応する `MDW_DEFAULT_*` を使います。Claude を使う場合は、プロバイダーと併せて Claude に対応するモデルを指定してください。起動前に共通の `AgentClient` で設定と CLI の場所を検証し、指定された課金方式と認証状態が一致することを確認します。権限の確認には、対話型 CLI の通常の仕組みを使います。Codex は `workspace-write` と `on-request` で起動し、Claude の権限設定は CLI に従います。
 
 intent は、後の AI が設計・実装・提案に迷ったときの判断材料です。対象プロジェクトの AI 向け指示には「`docs/intent.md` が存在する場合は、判断の前に読み、明示された要件や上位の指示を優先する。適用する条件が不明な場合は本人に確認する」と記載してください。生成される `AGENTS.md` を使う場合は、その生成元へ追記してください。このタスクは `AGENTS.md` を変更しません。
 
@@ -121,7 +121,7 @@ Claude APIを使う場合は`MDW_REVIEW_SECURITY_BILLING=api`を指定し、秘�
 
 各`target`には、実際には上位の`target`と同じ値が入ります。共通スキーマは`mdw/_lib/review-data.mts`に含まれます。プログラム側では、このスキーマで使用する必須フィールド、型、列挙値、最小値と余分なフィールドを個別に検証します。汎用のJSON Schema検証器ではないため、スキーマを変更するときは検証も更新してください。
 
-ライブラリでは、`ReviewWorkspace`（`review-workspace.mts`）が worktree のルートと出力ファイルを扱い、`AgentClient`（`agent-client.mts`）が環境変数のスナップショットとコマンド実行への依存を保持します。レビューと Judge は実行ごとのインスタンスを使い、変更可能な共有のルートや出力先を持ちません。コマンド実行、JSON の読み書き、レビュー結果の検証は、それぞれのモジュールの関数として利用します。工程の順序と並列実行は、mise が実行するタスクファイルに記述します。
+ライブラリでは、`ReviewWorkspace`（`review-workspace.mts`）が worktree のルートと出力ファイルを扱い、`AgentClient`（`agent-client.mts`）が環境変数のスナップショット、ワークフローごとの設定の解決と検証、認証確認、AI CLI の構造化出力と対話の呼び出しを扱います。レビュー、Judge、interview、worktree のブランチ名生成は同じクラスを使います。`workflow` には既定の `review`、`interview`、`worktree` を指定でき、設定は各ワークフローの `MDW_*` から `MDW_DEFAULT_*` の順に解決します。レビューの役割ごとの設定と旧 `AWF_REVIEW_*` の互換性も保持します。各処理は実行ごとのインスタンスを使い、変更可能な共有のルートや出力先を持ちません。コマンド実行、JSON の読み書き、レビュー結果の検証は、それぞれのモジュールの関数として利用します。工程の順序と並列実行は、mise が実行するタスクファイルに記述します。
 
 Codexには読み取り専用のサンドボックスを指定し、Claudeにはファイル検索・読み取りとBashのツールを許可して、planモードで起動します。コミットIDを使って差分とファイルを調べるよう依頼しますが、作業ツリーのファイルを読めないように隔離するものではありません。CLI自身の設定、フック、プラグイン、管理者設定なども完全には隔離しません。CLIのツールが読めない文字コードや、Gitがバイナリーと扱うファイルがある場合、モデルによって確認の可否が異なります。`limitations`はモデルの申告であり、すべての確認漏れを自動検知するものではありません。Judgeによる判定の精度と効果は今後の検証項目です。
 
@@ -175,7 +175,7 @@ mise run mdw:worktree:new --branch feat/passkey-login
 mise run mdw:worktree:new "パスキー認証を追加する"
 ```
 
-ブランチ名は `feat`、`fix`、`refactor`、`docs`、`test`、`chore`、`perf`、`build`、`ci`、`revert` のいずれかと、英小文字・数字・ハイフンによる説明を組み合わせます。名前が重複した場合は末尾に番号を付けます。AI の設定には `MDW_DEFAULT_PROVIDER`、`MDW_DEFAULT_MODEL`、`MDW_DEFAULT_EFFORT`、`MDW_DEFAULT_BILLING` を使用します。`MDW_WORKTREE_PROVIDER` などの `MDW_WORKTREE_` 設定で上書きできます。
+ブランチ名は `feat`、`fix`、`refactor`、`docs`、`test`、`chore`、`perf`、`build`、`ci`、`revert` のいずれかと、英小文字・数字・ハイフンによる説明を組み合わせます。名前が重複した場合は末尾に番号を付けます。AI の設定には `MDW_DEFAULT_PROVIDER`、`MDW_DEFAULT_MODEL`、`MDW_DEFAULT_EFFORT`、`MDW_DEFAULT_BILLING` を使用します。`MDW_WORKTREE_PROVIDER` などの `MDW_WORKTREE_` 設定で上書きできます。ブランチ名を AI に生成させる場合は、共通の `AgentClient` で設定と認証状態を確認し、プロバイダーに対応しないエフォートなどの不正な設定は起動前に拒否します。
 
 作成タスクは `main` の追跡先から取得し、fast-forward で更新できる場合は `main` を更新します。ローカルの未プッシュのコミットは保持し、履歴が分岐した場合や更新を妨げる変更がある場合は中断します。作成結果は `branch`、`path`、`base_commit` を含む JSON です。`path` は絶対パスです。
 
