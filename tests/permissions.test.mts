@@ -18,6 +18,16 @@ test("公開タスクだけが実行権限を持つ", {
 	}
 	for (const name of ["docs", "mdw"])
 		checkLibrary(path.join(root, name, "_lib"));
+	for (const entry of fs.readdirSync(path.join(root, "mdw/prompts"), {
+		withFileTypes: true,
+	})) {
+		if (entry.isFile())
+			assert.equal(
+				fs.statSync(path.join(root, "mdw/prompts", entry.name)).mode & 0o111,
+				0,
+				entry.name,
+			);
+	}
 	for (const file of [
 		"docs/new.mts",
 		"docs/search.mts",
@@ -25,6 +35,7 @@ test("公開タスクだけが実行権限を持つ", {
 		"mdw/check.mts",
 		"mdw/interview.mts",
 		"mdw/intent.mts",
+		"mdw/issue/new.mts",
 		"mdw/worktree/new.mts",
 		"mdw/worktree/cleanup.mts",
 		"mdw/review.mts",

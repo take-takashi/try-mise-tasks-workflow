@@ -74,6 +74,24 @@ intent は、後の AI が設計・実装・提案に迷ったときの判断材
 
 代替 CLI を使ってプロンプトの受け渡しと起動を検証しています。実際の AI との対話、質問の深さ、intent の更新品質は試用時の確認項目です。
 
+## Issue: 壁打ちから GitHub Issue を作る
+
+`mdw:issue:new` は、壁打ちを通じて要件・設計方針・テスト観点（testent：正常系・異常系・権限・境界値・障害）を詰め、本人の合意を得てから GitHub Issue を作成する対話型のワークフローです。テーマを引数で渡して始めることもできます。
+
+```sh
+mise run mdw:issue:new
+mise run mdw:issue:new "agy プロバイダーを追加したい"
+```
+
+既存の AI チャットでそのまま壁打ちする場合は、`--prompt` でプロンプトだけを取得できます。プロンプトの出力では AI CLI のインストールや認証は不要で、ファイルや GitHub への書き込みも行いません。
+
+```sh
+mise run mdw:issue:new --prompt
+mise run mdw:issue:new --prompt "agy プロバイダーを追加したい"
+```
+
+AI の設定は `MDW_ISSUE_PROVIDER`、`MDW_ISSUE_MODEL`、`MDW_ISSUE_EFFORT`、`MDW_ISSUE_BILLING` を使い、未指定の項目には対応する `MDW_DEFAULT_*` を使います。会話の進め方は [Issue 作成プロンプト](.mise/tasks/mdw/prompts/issue.md) で調整できます。合意前に外部へ起票しないよう指示しており、実際の起票には認証済みの `gh` CLI が必要です。代替 CLI を使ってプロンプトの受け渡しと起動を検証しています。実際の AI との対話品質や Issue 起票動作は試用時の確認項目です。
+
 ## 指摘の評価と PR への投稿
 
 レビューを実行した worktree で、集約済みの指摘を Judge に渡します。Judge は対象の差分と照らし合わせて各指摘を採用、棄却、根拠不足、重複のいずれかに分類し、判定の根拠を `.reviews/judged.json` に保存します。モデル設定は `MDW_REVIEW_JUDGE_PROVIDER`、`MDW_REVIEW_JUDGE_MODEL`、`MDW_REVIEW_JUDGE_EFFORT`、`MDW_REVIEW_JUDGE_BILLING` で上書きできます。指摘がなければ AI CLI は起動しません。
@@ -137,7 +155,7 @@ Claude APIを使う場合は`MDW_REVIEW_SECURITY_BILLING=api`を指定し、秘�
 
 各`target`には、実際には上位の`target`と同じ値が入ります。共通スキーマは`mdw/_lib/review-data.mts`に含まれます。プログラム側では、このスキーマで使用する必須フィールド、型、列挙値、最小値と余分なフィールドを個別に検証します。汎用のJSON Schema検証器ではないため、スキーマを変更するときは検証も更新してください。
 
-ライブラリでは、`ReviewWorkspace`（`review-workspace.mts`）が worktree のルートと出力ファイルを扱い、`AgentClient`（`agent-client.mts`）が環境変数のスナップショット、ワークフローごとの設定の解決と検証、認証確認、AI CLI の構造化出力と対話の呼び出しを扱います。レビュー、Judge、interview、worktree のブランチ名生成は同じクラスを使います。`workflow` には既定の `review`、`interview`、`worktree` を指定でき、設定は各ワークフローの `MDW_*` から `MDW_DEFAULT_*` の順に解決します。レビューの役割ごとの設定と旧 `AWF_REVIEW_*` の互換性も保持します。各処理は実行ごとのインスタンスを使い、変更可能な共有のルートや出力先を持ちません。コマンド実行、JSON の読み書き、レビュー結果の検証は、それぞれのモジュールの関数として利用します。工程の順序と並列実行は、mise が実行するタスクファイルに記述します。
+ライブラリでは、`ReviewWorkspace`（`review-workspace.mts`）が worktree のルートと出力ファイルを扱い、`AgentClient`（`agent-client.mts`）が環境変数のスナップショット、ワークフローごとの設定の解決と検証、認証確認、AI CLI の構造化出力と対話の呼び出しを扱います。レビュー、Judge、interview、issue、worktree のブランチ名生成は同じクラスを使います。`workflow` には既定の `review`、`interview`、`issue`、`worktree` を指定でき、設定は各ワークフローの `MDW_*` から `MDW_DEFAULT_*` の順に解決します。レビューの役割ごとの設定と旧 `AWF_REVIEW_*` の互換性も保持します。各処理は実行ごとのインスタンスを使い、変更可能な共有のルートや出力先を持ちません。コマンド実行、JSON の読み書き、レビュー結果の検証は、それぞれのモジュールの関数として利用します。工程の順序と並列実行は、mise が実行するタスクファイルに記述します。
 
 Codexには読み取り専用のサンドボックスを指定し、Claudeにはファイル検索・読み取りとBashのツールを許可して、planモードで起動します。コミットIDを使って差分とファイルを調べるよう依頼しますが、作業ツリーのファイルを読めないように隔離するものではありません。CLI自身の設定、フック、プラグイン、管理者設定なども完全には隔離しません。CLIのツールが読めない文字コードや、Gitがバイナリーと扱うファイルがある場合、モデルによって確認の可否が異なります。`limitations`はモデルの申告であり、すべての確認漏れを自動検知するものではありません。Judgeによる判定の精度と効果は今後の検証項目です。
 
