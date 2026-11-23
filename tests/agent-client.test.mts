@@ -15,7 +15,7 @@ function executables(t) {
 
 test("各ワークフローの設定を優先し、共通の検証で不正値を拒否する", (t) => {
 	const root = executables(t);
-	for (const workflow of ["review", "interview", "worktree"]) {
+	for (const workflow of ["review", "interview", "issue", "worktree"]) {
 		const prefix = `MDW_${workflow.toUpperCase()}`;
 		const env = {
 			PATH: root,
@@ -56,7 +56,7 @@ test("各ワークフローの設定を優先し、共通の検証で不正値�
 
 test("各ワークフローは指定した課金方式と異なる認証を拒否する", async (t) => {
 	const root = executables(t);
-	for (const workflow of ["review", "interview", "worktree"]) {
+	for (const workflow of ["review", "interview", "issue", "worktree"]) {
 		for (const provider of ["codex", "claude"]) {
 			const client = new AgentClient({
 				cwd: root,

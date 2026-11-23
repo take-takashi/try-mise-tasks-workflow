@@ -1,14 +1,8 @@
 import fs from "node:fs";
-import { runCommand } from "./command.mts";
 import { buildIntentPrompt } from "./intent.mts";
+import { discoverRoot } from "./interactive.mts";
 
-export async function discoverRoot(cwd: string) {
-	const { stdout } = await runCommand(["git", "rev-parse", "--show-toplevel"], {
-		cwd,
-		timeout: 30,
-	});
-	return stdout.toString("utf8").trim();
-}
+export { discoverRoot };
 
 export function buildPrompt() {
 	const interview = fs.readFileSync(

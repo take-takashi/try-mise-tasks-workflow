@@ -43,7 +43,7 @@ function config(workflow, role, env, cwd) {
 	const provider = setting("PROVIDER", "codex");
 	const model = setting(
 		"MODEL",
-		workflow === "interview" && provider === "claude"
+		["interview", "issue"].includes(workflow) && provider === "claude"
 			? "sonnet"
 			: "gpt-6.1-sol",
 	);
@@ -141,7 +141,8 @@ export class AgentClient {
 		reviewers = this.workflow === "review" ? Object.keys(roles) : [undefined],
 		{ log = console.log } = {},
 	) {
-		if (this.workflow !== "interview") timeoutSeconds(this.#environment);
+		if (!["interview", "issue"].includes(this.workflow))
+			timeoutSeconds(this.#environment);
 		for (const role of reviewers) {
 			const { provider, billing, executable } = this.config(role);
 			const env = childEnvironment(provider, billing, this.#environment);
