@@ -13,7 +13,7 @@ export async function run({
 } = {}) {
 	// 呼び出した場所が属する worktree のルートを特定する。
 	const root = await discoverRoot(cwd);
-	// 一問ずつ深掘りし、その場で intent を更新するプロンプトを用意する。
+	// 壁打ちを通じて intent を作成・更新するプロンプトを用意する。
 	const prompt = buildPrompt();
 	// 既存の AI チャットへ渡す場合は、プロンプトだけを出力する。
 	if (promptOnly) {
