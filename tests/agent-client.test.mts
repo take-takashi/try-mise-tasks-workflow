@@ -183,7 +183,7 @@ test("モデル未指定または空白のみのときは --model を渡さず�
 	}
 });
 
-test("agy の設定検証、エフォート衝突回避、環境分離、構造化出力の検証を行う", async (t) => {
+test("agy の設定検証、エフォート・課金扱い、環境分離、stdin と構造化出力を検証する", async (t) => {
 	const root = executables(t);
 	const logs = [];
 	const calls = [];
@@ -215,6 +215,7 @@ test("agy の設定検証、エフォート衝突回避、環境分離、構造�
 					JSON.stringify({
 						status: "SUCCESS",
 						structured_output: { ok: true },
+						denied_actions: [{ action: "write_file", display_name: "Write" }],
 					}),
 				),
 				stderr: Buffer.alloc(0),
@@ -228,6 +229,7 @@ test("agy の設定検証、エフォート衝突回避、環境分離、構造�
 	const security = client.config("security");
 	assert.equal(security.model, "gemini-3.8-flash-low");
 	assert.equal(security.effort, "low");
+	assert.equal(security.billing, "cli");
 	const securityInteractive = client.interactiveCommand(security, "-prompt");
 	assert.ok(!securityInteractive.args.includes("--effort"));
 	assert.deepEqual(securityInteractive.args, [
@@ -242,24 +244,62 @@ test("agy の設定検証、エフォート衝突回避、環境分離、構造�
 
 	const quality = client.config("quality");
 	assert.equal(quality.model, "gemini-pro-orchestrator-neon");
-	assert.equal(quality.effort, "high");
-	await client.runStructured(quality, "-check", { type: "object" });
+	assert.equal(quality.effort, null);
+	assert.equal(quality.billing, "cli");
+	const orchestratorInteractive = client.interactiveCommand(quality, "prompt");
+	assert.ok(!orchestratorInteractive.args.includes("--effort"));
+
+	const longPrompt = "A".repeat(200_000);
+	const structured = await client.runStructured(
+		quality,
+		longPrompt,
+		{ type: "object" },
+		{ tools: "Read,Grep,Glob,Bash" },
+	);
+	assert.deepEqual(structured, { data: { ok: true }, permissionDenials: 1 });
 	const structuredCall = calls.at(-1);
-	assert.ok(structuredCall.args.includes("--mode"));
-	assert.ok(structuredCall.args.includes("plan"));
-	assert.ok(structuredCall.args.includes("--sandbox"));
-	assert.ok(structuredCall.args.includes("--print-timeout"));
-	assert.ok(structuredCall.args.includes("45s"));
+	assert.ok(structuredCall.args.includes("--input-format"));
 	assert.equal(
-		structuredCall.args[structuredCall.args.indexOf("--effort") + 1],
-		"high",
+		structuredCall.args[structuredCall.args.indexOf("--input-format") + 1],
+		"text",
+	);
+	assert.ok(structuredCall.args.includes("--sandbox"));
+	assert.ok(structuredCall.args.includes("--disable-slash-commands"));
+	assert.ok(!structuredCall.args.includes("--effort"));
+	assert.ok(!structuredCall.args.some((arg) => arg.includes(longPrompt)));
+	assert.equal(structuredCall.options.input, longPrompt);
+	assert.equal(
+		structuredCall.args[structuredCall.args.indexOf("--print-timeout") + 1],
+		"45s",
 	);
 	assert.equal(
 		structuredCall.args[structuredCall.args.indexOf("--model") + 1],
 		"gemini-pro-orchestrator-neon",
 	);
-	assert.equal(structuredCall.args.at(-1), "--print=-check");
+	const settings = JSON.parse(
+		structuredCall.args[structuredCall.args.indexOf("--settings") + 1],
+	);
+	assert.equal(settings.enableTerminalSandbox, true);
+	assert.equal(settings.toolPermission, "proceed-in-sandbox");
+	assert.ok(settings.permissions.deny.includes("write_file(*)"));
+	assert.ok(!settings.permissions.deny.includes("command(*)"));
 	assert.equal(structuredCall.options.env.GEMINI_API_KEY, undefined);
+
+	await client.runStructured(
+		client.config(),
+		"branch prompt",
+		{ type: "object" },
+		{ tools: "" },
+	);
+	const noToolsCall = calls.at(-1);
+	assert.equal(
+		noToolsCall.args[noToolsCall.args.indexOf("--effort") + 1],
+		"medium",
+	);
+	const noToolsSettings = JSON.parse(
+		noToolsCall.args[noToolsCall.args.indexOf("--settings") + 1],
+	);
+	assert.ok(noToolsSettings.permissions.deny.includes("command(*)"));
 
 	assert.throws(
 		() =>

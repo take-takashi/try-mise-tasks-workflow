@@ -38,11 +38,32 @@ function executableOnPath(name, env, cwd) {
 }
 const agyEfforts = ["low", "medium", "high", "xhigh", "max"];
 const agyModelEffortPattern = /-(low|medium|high|xhigh|max)$/;
+const agyOrchestratorPattern = /orchestrator/i;
 
 function agyModelEffort(model) {
 	return typeof model === "string"
 		? agyModelEffortPattern.exec(model)?.[1]
 		: undefined;
+}
+
+function isAgyFixedBudgetModel(model) {
+	return typeof model === "string" && agyOrchestratorPattern.test(model);
+}
+
+function agyEffortArgs(model, effort) {
+	if (agyModelEffort(model) || isAgyFixedBudgetModel(model) || !effort)
+		return [];
+	return ["--effort", effort];
+}
+
+function agyReadOnlySettings(tools) {
+	const deny = ["write_file(*)", "read_url(*)", "execute_url(*)", "mcp(*)"];
+	if (!tools) deny.push("command(*)");
+	return JSON.stringify({
+		enableTerminalSandbox: true,
+		toolPermission: "proceed-in-sandbox",
+		permissions: { deny },
+	});
 }
 
 function config(workflow, role, env, cwd) {
@@ -71,12 +92,17 @@ function config(workflow, role, env, cwd) {
 			`${scope}_EFFORT は ${provider} に対応する値を指定してください。`,
 		);
 	const resolvedEffort =
-		provider === "agy" ? (agyModelEffort(model) ?? effort) : effort;
+		provider === "agy"
+			? isAgyFixedBudgetModel(model)
+				? null
+				: (agyModelEffort(model) ?? effort)
+			: effort;
+	const resolvedBilling = provider === "agy" ? "cli" : billing;
 	return {
 		provider,
 		model,
 		effort: resolvedEffort,
-		billing,
+		billing: resolvedBilling,
 		executable: executableOnPath(provider, env, cwd),
 	};
 }
@@ -208,11 +234,10 @@ export class AgentClient {
 	interactiveCommand(settings, prompt) {
 		const { provider, model, effort, billing, executable } = settings;
 		if (provider === "agy") {
-			const effortArgs = agyModelEffort(model) ? [] : ["--effort", effort];
 			return {
 				executable,
 				args: [
-					...effortArgs,
+					...agyEffortArgs(model, effort),
 					...(model ? ["--model", model] : []),
 					`--prompt-interactive=${prompt}`,
 				],
@@ -323,41 +348,40 @@ export class AgentClient {
 			data = envelope.structured_output;
 			permissionDenials = envelope.permission_denials?.length ?? 0;
 		} else {
-			const effortArgs = agyModelEffort(model) ? [] : ["--effort", effort];
 			const result = await this.#run(
 				[
 					executable,
-					"--mode",
-					"plan",
+					"--input-format",
+					"text",
 					"--sandbox",
+					"--disable-slash-commands",
+					"--settings",
+					agyReadOnlySettings(tools),
 					"--output-format",
 					"json",
 					"--json-schema",
 					JSON.stringify(schema),
 					"--print-timeout",
 					`${timeout}s`,
-					...effortArgs,
+					...agyEffortArgs(model, effort),
 					...(model ? ["--model", model] : []),
-					`--print=${prompt}`,
 				],
-				{ cwd: this.cwd, env, timeout },
+				{ cwd: this.cwd, env, input: prompt, timeout },
 			);
 			let envelope: {
 				status?: string;
 				structured_output: ReturnType<typeof readJson>;
+				denied_actions?: unknown[];
 			};
 			try {
 				envelope = JSON.parse(result.stdout.toString("utf8"));
 			} catch {
 				throw new Error("agyの出力が不正なJSONです。");
 			}
-			if (
-				!envelope ||
-				envelope.status !== "SUCCESS" ||
-				!("structured_output" in envelope)
-			)
+			if (envelope?.status !== "SUCCESS" || !("structured_output" in envelope))
 				throw new Error("agyの構造化出力がありません。");
 			data = envelope.structured_output;
+			permissionDenials = envelope.denied_actions?.length ?? 0;
 		}
 		return { data, permissionDenials };
 	}

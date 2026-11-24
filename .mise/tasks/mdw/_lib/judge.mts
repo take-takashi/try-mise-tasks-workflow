@@ -128,8 +128,9 @@ export async function judgeFindings({ target, candidates, workspace }) {
 		decisionSchema,
 	);
 	const decisions = validateDecisions(data?.decisions, candidates);
+	const label = provider === "claude" ? "Claude" : provider;
 	const limitations = permissionDenials
-		? [`Claudeのツール使用が${permissionDenials}件拒否されました。`]
+		? [`${label}のツール使用が${permissionDenials}件拒否されました。`]
 		: [];
 	return { judge: { provider, model: model ?? null }, limitations, decisions };
 }

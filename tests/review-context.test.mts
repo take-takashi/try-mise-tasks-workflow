@@ -188,11 +188,7 @@ test("AgentClient は環境変数のスナップショットと実行先をク�
 			);
 		}
 		assert.equal(calls[1].options.timeout, 20 + index);
-		if (provider === "agy") {
-			assert.equal(calls[1].args.at(-1), "--print=prompt");
-		} else {
-			assert.equal(calls[1].options.input, "prompt");
-		}
+		assert.equal(calls[1].options.input, "prompt");
 		if (provider === "codex")
 			assert.ok(!fs.existsSync(path.dirname(resultFile())));
 	}
