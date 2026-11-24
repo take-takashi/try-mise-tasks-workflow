@@ -41,17 +41,11 @@ function config(workflow, role, env, cwd) {
 		resolveSetting(workflow, role, field, fallback, env);
 	const scope = `MDW_${workflow.toUpperCase()}${role ? `_${role.toUpperCase()}` : ""}`;
 	const provider = setting("PROVIDER", "codex");
-	const model = setting(
-		"MODEL",
-		["interview", "issue"].includes(workflow) && provider === "claude"
-			? "sonnet"
-			: "gpt-6.1-sol",
-	);
+	const model = setting("MODEL", undefined);
 	const effort = setting("EFFORT", "medium");
 	const billing = setting("BILLING", "subscription");
 	if (
 		!["codex", "claude"].includes(provider) ||
-		!model ||
 		!["subscription", "api"].includes(billing)
 	)
 		throw new Error(`${scope}_* の設定が不正です。`);
@@ -196,7 +190,7 @@ export class AgentClient {
 				: ["--effort", effort];
 		return {
 			executable,
-			args: [...args, "--model", model, prompt],
+			args: [...args, ...(model ? ["--model", model] : []), prompt],
 			env: childEnvironment(provider, billing, this.#environment),
 		};
 	}
@@ -237,8 +231,7 @@ export class AgentClient {
 						"--sandbox",
 						"read-only",
 						"--ephemeral",
-						"--model",
-						model,
+						...(model ? ["--model", model] : []),
 						"--output-schema",
 						schemaFile,
 						"-o",
@@ -256,8 +249,7 @@ export class AgentClient {
 				[
 					executable,
 					"-p",
-					"--model",
-					model,
+					...(model ? ["--model", model] : []),
 					"--effort",
 					effort,
 					"--tools",

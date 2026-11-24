@@ -68,7 +68,7 @@ mise run mdw:interview --prompt
 
 実行場所が属する worktree のルートで AI CLI を起動するため、サブフォルダーから実行しても intent の相対パスは変わりません。ファイルを変更する場合は、対象プロジェクトの作業用 worktree の規約に従います。このプロジェクトでは作業用 worktree で実行してください。
 
-AI の設定は `MDW_INTERVIEW_PROVIDER`、`MDW_INTERVIEW_MODEL`、`MDW_INTERVIEW_EFFORT`、`MDW_INTERVIEW_BILLING` を使い、未指定の項目には対応する `MDW_DEFAULT_*` を使います。Claude を使う場合は、プロバイダーと併せて Claude に対応するモデルを指定してください。起動前に共通の `AgentClient` で設定と CLI の場所を検証し、指定された課金方式と認証状態が一致することを確認します。権限の確認には、対話型 CLI の通常の仕組みを使います。Codex は `workspace-write` と `on-request` で起動し、Claude の権限設定は CLI に従います。
+AI の設定は `MDW_INTERVIEW_PROVIDER`、`MDW_INTERVIEW_MODEL`、`MDW_INTERVIEW_EFFORT`、`MDW_INTERVIEW_BILLING` を使い、未指定の項目には対応する `MDW_DEFAULT_*` を使います。モデルを未指定にすると `--model` を渡さず各 AI CLI の既定モデルを使います。`MDW_DEFAULT_MODEL` を指定している状態で別のプロバイダーへ切り替える場合は、対応するモデルも併せて指定してください。起動前に共通の `AgentClient` で設定と CLI の場所を検証し、指定された課金方式と認証状態が一致することを確認します。権限の確認には、対話型 CLI の通常の仕組みを使います。Codex は `workspace-write` と `on-request` で起動し、Claude の権限設定は CLI に従います。
 
 intent は、後の AI が設計・実装・提案に迷ったときの判断材料です。対象プロジェクトの AI 向け指示には「`docs/intent.md` が存在する場合は、判断の前に読み、明示された要件や上位の指示を優先する。適用する条件が不明な場合は本人に確認する」と記載してください。生成される `AGENTS.md` を使う場合は、その生成元へ追記してください。このタスクは `AGENTS.md` を変更しません。
 
@@ -108,15 +108,15 @@ mise run mdw:review:post --pr https://github.com/OWNER/REPO/pull/123
 
 `mise.toml`は`.mdw/models.env`と任意の`.mdw/models.local.env`を読み込みます。共有してよい既定値は前者に置き、個人用の上書きはGit管理外の後者に置きます。`mise.local.toml`にも個人用の上書きを置けます。同じ環境変数については、miseがenvファイルを記述順に読み込み、後のファイルが前の値を上書きします。さらに、`mise.local.toml`は`mise.toml`より後に読み込まれるため、同じ変数の値が優先されます。dotenvの値は、miseを起動した環境に同じ変数がある場合も置き換えます。[envファイルの読み込み](https://mise.jdx.dev/environments/#env_._file)と[設定ファイルの優先順位](https://mise.jdx.dev/environments/#precedence)を参照してください。
 
-レビュー設定は、役割ごとの`MDW_REVIEW_<ROLE>_*`、旧設定との互換用`AWF_REVIEW_<ROLE>_*`、レビュー共通の`MDW_REVIEW_*`、`MDW_DEFAULT_*`の順で解決します。どこにも値がない場合は、プログラム側の既定値を使います。既定では両方の観点にCodexを使います。モデルとエフォートの組み合わせの利用可否は契約やCLIの設定によって異なるため、必要に応じて変更してください。
+レビュー設定は、役割ごとの`MDW_REVIEW_<ROLE>_*`、旧設定との互換用`AWF_REVIEW_<ROLE>_*`、レビュー共通の`MDW_REVIEW_*`、`MDW_DEFAULT_*`の順で解決します。どこにも値がない場合、プロバイダーは`codex`、エフォートは`medium`、課金方式は`subscription`を使い、モデルについては`--model`を渡さず各AI CLI側の既定モデルに委ねます。モデルとエフォートの組み合わせの利用可否は契約やCLIの設定によって異なるため、必要に応じて変更してください。
 
 レビュー範囲の`MDW_REVIEW_BASE`、`MDW_REVIEW_HEAD`と旧`AWF_REVIEW_BASE`、`AWF_REVIEW_HEAD`は読み込みません。代わりに`--base`、`--head`または部品の引数を使ってください。タイムアウトの旧`AWF_REVIEW_TIMEOUT_SECONDS`は引き続き読み込み、`MDW_REVIEW_TIMEOUT_SECONDS`を優先します。Claude APIキーには`MDW_ANTHROPIC_API_KEY`を使用し、旧`AWF_ANTHROPIC_API_KEY`も受け付けます。APIキーは`.mdw/models.env`やGit管理対象の設定ファイルには記載せず、環境変数または秘密情報管理ツールから渡してください。
 
-共有の`.mdw/models.env`でレビュー全体の既定値を設定する例:
+共有の`.mdw/models.env`で全体の既定値を設定する例（`MDW_DEFAULT_MODEL`は任意で、未指定なら各CLIの既定モデルを使います）:
 
 ```dotenv
 MDW_DEFAULT_PROVIDER=codex
-MDW_DEFAULT_MODEL=gpt-6.1-sol
+# MDW_DEFAULT_MODEL=gpt-6.1-sol
 MDW_DEFAULT_EFFORT=medium
 MDW_DEFAULT_BILLING=subscription
 ```
@@ -140,15 +140,15 @@ Claude APIを使う場合は`MDW_REVIEW_SECURITY_BILLING=api`を指定し、秘�
 
 ## 結果と検証範囲
 
-`merged.json`には指定されたベースとヘッド、固定したコミットID、共通祖先、変更ファイル一覧、実行ID、全体の実行時間と、観点ごとのプロバイダー、モデル、エフォート、課金方式、実行時間、元の指摘を保持します。実行時間は、全体では準備タスクの開始から集約結果の保存直前まで、各観点ではレビュータスクの開始から結果の検証完了までの秒数です。重複の除去や指摘の採否は行いません。`findings: []`は指摘なしを表します。各ファイルの確認状況を`file_coverage`に、読み取れないファイルやツールの制限などを`limitations`に記録するよう依頼します。ファイルの確認状況が報告されなかった場合、プログラムが`limitations`に追記します。Gitがバイナリーと判定したファイルは、確認状況がモデルの申告である旨を追記します。
+`merged.json`には指定されたベースとヘッド、固定したコミットID、共通祖先、変更ファイル一覧、実行ID、全体の実行時間と、観点ごとのプロバイダー、モデル（未指定で各CLIの既定モデルを使った場合は`null`）、エフォート、課金方式、実行時間、元の指摘を保持します。`judged.json`の`judge.model`も同様に、未指定の場合は`null`を記録します。実行時間は、全体では準備タスクの開始から集約結果の保存直前まで、各観点ではレビュータスクの開始から結果の検証完了までの秒数です。重複の除去や指摘の採否は行いません。`findings: []`は指摘なしを表します。各ファイルの確認状況を`file_coverage`に、読み取れないファイルやツールの制限などを`limitations`に記録するよう依頼します。ファイルの確認状況が報告されなかった場合、プログラムが`limitations`に追記します。Gitがバイナリーと判定したファイルは、確認状況がモデルの申告である旨を追記します。
 
 ```json
 {
   "target": {"run_id": "...", "base_ref": "main", "head_ref": "HEAD", "base_commit": "...", "merge_base_commit": "...", "head_commit": "...", "changed_files": [{"path": "app.py", "binary": false, "path_encoding_error": false}]},
   "duration_seconds": 32.1,
   "reviews": [
-    {"reviewer_id": "security", "provider": "codex", "model": "gpt-6.1-sol", "effort": "medium", "billing": "subscription", "duration_seconds": 30.0, "target": {}, "review": {"findings": [], "limitations": [], "file_coverage": [{"file": "app.py", "status": "reviewed", "detail": "コミット間の差分を確認"}]}},
-    {"reviewer_id": "quality", "provider": "codex", "model": "gpt-6.1-sol", "effort": "medium", "billing": "subscription", "duration_seconds": 32.0, "target": {}, "review": {"findings": [], "limitations": [], "file_coverage": [{"file": "app.py", "status": "reviewed", "detail": "コミット間の差分を確認"}]}}
+    {"reviewer_id": "security", "provider": "codex", "model": null, "effort": "medium", "billing": "subscription", "duration_seconds": 30.0, "target": {}, "review": {"findings": [], "limitations": [], "file_coverage": [{"file": "app.py", "status": "reviewed", "detail": "コミット間の差分を確認"}]}},
+    {"reviewer_id": "quality", "provider": "codex", "model": null, "effort": "medium", "billing": "subscription", "duration_seconds": 32.0, "target": {}, "review": {"findings": [], "limitations": [], "file_coverage": [{"file": "app.py", "status": "reviewed", "detail": "コミット間の差分を確認"}]}}
   ]
 }
 ```

@@ -111,3 +111,55 @@ test("対話もクライアント作成時の環境と検証済みの実行フ�
 	assert.equal(args[args.indexOf("--model") + 1], "original-model");
 	assert.equal(args.at(-1), "prompt");
 });
+
+test("モデル未指定または空白のみのときは --model を渡さず各 CLI の既定モデルに委ねる", async (t) => {
+	const root = executables(t);
+	for (const provider of ["codex", "claude"]) {
+		for (const rawModel of [undefined, "   "]) {
+			const calls = [];
+			const environment = {
+				PATH: root,
+				MDW_DEFAULT_PROVIDER: provider,
+				...(rawModel !== undefined ? { MDW_DEFAULT_MODEL: rawModel } : {}),
+			};
+			const client = new AgentClient({
+				cwd: root,
+				workflow: "review",
+				environment,
+				run: async (args) => {
+					calls.push(args);
+					if (provider === "codex") {
+						fs.writeFileSync(
+							args[args.indexOf("-o") + 1],
+							JSON.stringify({ ok: true }),
+						);
+						return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+					}
+					return {
+						stdout: Buffer.from(
+							JSON.stringify({
+								structured_output: { ok: true },
+								permission_denials: [],
+							}),
+						),
+						stderr: Buffer.alloc(0),
+					};
+				},
+			});
+			const settings = client.config();
+			assert.equal(settings.model, undefined);
+			const interactive = client.interactiveCommand(settings, "prompt");
+			assert.ok(!interactive.args.includes("--model"));
+			assert.equal(interactive.args.at(-1), "prompt");
+			const structured = await client.runStructured(settings, "prompt", {
+				type: "object",
+			});
+			assert.deepEqual(structured, {
+				data: { ok: true },
+				permissionDenials: 0,
+			});
+			assert.equal(calls.length, 1);
+			assert.ok(!calls[0].includes("--model"));
+		}
+	}
+});
