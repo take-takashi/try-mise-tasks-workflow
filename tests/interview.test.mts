@@ -115,12 +115,13 @@ test("CLI に worktree のルートとプロンプトを渡し、終了コード
 	const root = fixture(t);
 	const bin = path.join(root, "fake bin");
 	fs.mkdirSync(bin);
-	for (const provider of ["codex", "claude"]) {
+	for (const provider of ["codex", "claude", "agy"]) {
 		fs.writeFileSync(
 			path.join(bin, provider),
 			`#!/usr/bin/env node
 if (process.argv[2] === "login") { console.log("Logged in using ChatGPT"); process.exit(0); }
 if (process.argv[2] === "auth") { console.log(JSON.stringify({authMethod:"claude.ai"})); process.exit(0); }
+if (process.argv[2] === "models") { console.log("gemini-3.8-flash-medium"); process.exit(0); }
 console.log(JSON.stringify({cwd:process.cwd(),args:process.argv.slice(2),key:process.env.OPENAI_API_KEY}));
 process.exitCode = 7;
 `,
@@ -154,7 +155,12 @@ process.exitCode = await run();`,
 		assert.equal(result.status, 7, result.stderr);
 		const received = JSON.parse(result.stdout.trim().split("\n").at(-1));
 		assert.equal(fs.realpathSync(received.cwd), fs.realpathSync(root));
-		assert.equal(received.args.at(-1), buildPrompt());
+		assert.equal(
+			received.args.at(-1),
+			provider === "agy"
+				? `--prompt-interactive=${buildPrompt()}`
+				: buildPrompt(),
+		);
 		assert.equal(received.key, undefined);
 		assert.equal(
 			received.args[received.args.indexOf("--model") + 1],

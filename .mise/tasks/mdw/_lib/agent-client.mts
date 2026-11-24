@@ -36,6 +36,15 @@ function executableOnPath(name, env, cwd) {
 	}
 	throw new Error(name + " CLI が見つかりません。");
 }
+const agyEfforts = ["low", "medium", "high", "xhigh", "max"];
+const agyModelEffortPattern = /-(low|medium|high|xhigh|max)$/;
+
+function agyModelEffort(model) {
+	return typeof model === "string"
+		? agyModelEffortPattern.exec(model)?.[1]
+		: undefined;
+}
+
 function config(workflow, role, env, cwd) {
 	const setting = (field, fallback) =>
 		resolveSetting(workflow, role, field, fallback, env);
@@ -45,7 +54,7 @@ function config(workflow, role, env, cwd) {
 	const effort = setting("EFFORT", "medium");
 	const billing = setting("BILLING", "subscription");
 	if (
-		!["codex", "claude"].includes(provider) ||
+		!["codex", "claude", "agy"].includes(provider) ||
 		!["subscription", "api"].includes(billing)
 	)
 		throw new Error(`${scope}_* の設定が不正です。`);
@@ -54,15 +63,19 @@ function config(workflow, role, env, cwd) {
 	const allowed =
 		provider === "codex"
 			? ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
-			: ["low", "medium", "high", "xhigh", "max", "ultracode"];
+			: provider === "claude"
+				? ["low", "medium", "high", "xhigh", "max", "ultracode"]
+				: agyEfforts;
 	if (!allowed.includes(effort))
 		throw new Error(
 			`${scope}_EFFORT は ${provider} に対応する値を指定してください。`,
 		);
+	const resolvedEffort =
+		provider === "agy" ? (agyModelEffort(model) ?? effort) : effort;
 	return {
 		provider,
 		model,
-		effort,
+		effort: resolvedEffort,
 		billing,
 		executable: executableOnPath(provider, env, cwd),
 	};
@@ -83,6 +96,9 @@ export function childEnvironment(provider, billing, environment = process.env) {
 		"CLAUDE_CODE_USE_VERTEX",
 		"CLAUDE_CODE_USE_FOUNDRY",
 		"CLAUDE_CODE_USE_GATEWAY",
+		"GEMINI_API_KEY",
+		"GOOGLE_API_KEY",
+		"GOOGLE_GENAI_USE_VERTEXAI",
 	])
 		delete env[key];
 	if (provider === "claude" && billing === "api") {
@@ -152,7 +168,7 @@ export class AgentClient {
 					)
 				)
 					throw new Error("CodexのChatGPT認証を確認できません。");
-			} else {
+			} else if (provider === "claude") {
 				const result = await this.#run([executable, "auth", "status"], {
 					env,
 					cwd: this.cwd,
@@ -170,6 +186,20 @@ export class AgentClient {
 					throw new Error(
 						"Claudeの認証方式が指定した " + billing + " と一致しません。",
 					);
+			} else {
+				const result = await this.#run([executable, "models"], {
+					env,
+					cwd: this.cwd,
+					timeout: 30,
+				});
+				if (!result.stdout.toString("utf8").trim())
+					throw new Error(
+						"agy の利用可能なモデルを確認できません。agy にログインしているか確認してください。",
+					);
+				log(
+					`${role ?? this.workflow}: agy の設定と利用可能なモデルを確認しました（課金先・アカウントは agy CLI のログイン設定に従います）。`,
+				);
+				continue;
 			}
 			log(`${role ?? this.workflow}: ${provider} の設定と認証を確認しました。`);
 		}
@@ -177,6 +207,18 @@ export class AgentClient {
 
 	interactiveCommand(settings, prompt) {
 		const { provider, model, effort, billing, executable } = settings;
+		if (provider === "agy") {
+			const effortArgs = agyModelEffort(model) ? [] : ["--effort", effort];
+			return {
+				executable,
+				args: [
+					...effortArgs,
+					...(model ? ["--model", model] : []),
+					`--prompt-interactive=${prompt}`,
+				],
+				env: childEnvironment(provider, billing, this.#environment),
+			};
+		}
 		const args =
 			provider === "codex"
 				? [
@@ -244,7 +286,7 @@ export class AgentClient {
 			} finally {
 				fs.rmSync(temporary, { recursive: true, force: true });
 			}
-		} else {
+		} else if (provider === "claude") {
 			const result = await this.#run(
 				[
 					executable,
@@ -280,6 +322,42 @@ export class AgentClient {
 				throw new Error("Claudeの構造化出力がありません。");
 			data = envelope.structured_output;
 			permissionDenials = envelope.permission_denials?.length ?? 0;
+		} else {
+			const effortArgs = agyModelEffort(model) ? [] : ["--effort", effort];
+			const result = await this.#run(
+				[
+					executable,
+					"--mode",
+					"plan",
+					"--sandbox",
+					"--output-format",
+					"json",
+					"--json-schema",
+					JSON.stringify(schema),
+					"--print-timeout",
+					`${timeout}s`,
+					...effortArgs,
+					...(model ? ["--model", model] : []),
+					`--print=${prompt}`,
+				],
+				{ cwd: this.cwd, env, timeout },
+			);
+			let envelope: {
+				status?: string;
+				structured_output: ReturnType<typeof readJson>;
+			};
+			try {
+				envelope = JSON.parse(result.stdout.toString("utf8"));
+			} catch {
+				throw new Error("agyの出力が不正なJSONです。");
+			}
+			if (
+				!envelope ||
+				envelope.status !== "SUCCESS" ||
+				!("structured_output" in envelope)
+			)
+				throw new Error("agyの構造化出力がありません。");
+			data = envelope.structured_output;
 		}
 		return { data, permissionDenials };
 	}

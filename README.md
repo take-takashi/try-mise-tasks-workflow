@@ -22,7 +22,7 @@ mise run mdw:intent
 
 ## 事前準備
 
-- mise、Git、利用するCodex CLIまたはClaude Code CLIをインストールし、各CLIでログインしてください。
+- mise、Git、利用する Codex CLI・Claude Code CLI・Antigravity CLI（`agy`）のいずれかをインストールし、各 CLI でログインしてください。
 - `mise install`でNode.js 24とBiomeの最新版を用意してください。初回はmiseによるプロジェクト設定の信頼確認が表示される場合があります。
 - レビュー対象の変更をコミットしてください。既定では`main`と`HEAD`の共通祖先から`HEAD`までのコミット済みの変更を対象とし、未コミットの変更を含めないよう各CLIへ依頼します。
 - AIのサービスへ差分が送信されるため、送信してよい内容かを確認してください。
@@ -50,7 +50,7 @@ mise run mdw:review --base origin/main --head HEAD
 
 ## Interview: 対話から intent を作る
 
-`mdw:interview` は、壁打ちや雑談を通じてプロジェクトの思想や目指す姿を言葉にする、対話型のワークフローです。Codex CLI または Claude Code CLI にプロンプトを渡し、会話から見えてきた判断基準を `docs/intent.md` にまとめるよう依頼します。端末で実行してください。
+`mdw:interview` は、壁打ちや雑談を通じてプロジェクトの思想や目指す姿を言葉にする、対話型のワークフローです。Codex CLI、Claude Code CLI、または Antigravity CLI（`agy`）にプロンプトを渡し、会話から見えてきた判断基準を `docs/intent.md` にまとめるよう依頼します。端末で実行してください。
 
 ```sh
 mise run mdw:interview
@@ -68,7 +68,7 @@ mise run mdw:interview --prompt
 
 実行場所が属する worktree のルートで AI CLI を起動するため、サブフォルダーから実行しても intent の相対パスは変わりません。ファイルを変更する場合は、対象プロジェクトの作業用 worktree の規約に従います。このプロジェクトでは作業用 worktree で実行してください。
 
-AI の設定は `MDW_INTERVIEW_PROVIDER`、`MDW_INTERVIEW_MODEL`、`MDW_INTERVIEW_EFFORT`、`MDW_INTERVIEW_BILLING` を使い、未指定の項目には対応する `MDW_DEFAULT_*` を使います。モデルを未指定にすると `--model` を渡さず各 AI CLI の既定モデルを使います。`MDW_DEFAULT_MODEL` を指定している状態で別のプロバイダーへ切り替える場合は、対応するモデルも併せて指定してください。起動前に共通の `AgentClient` で設定と CLI の場所を検証し、指定された課金方式と認証状態が一致することを確認します。権限の確認には、対話型 CLI の通常の仕組みを使います。Codex は `workspace-write` と `on-request` で起動し、Claude の権限設定は CLI に従います。
+AI の設定は `MDW_INTERVIEW_PROVIDER`、`MDW_INTERVIEW_MODEL`、`MDW_INTERVIEW_EFFORT`、`MDW_INTERVIEW_BILLING` を使い、未指定の項目には対応する `MDW_DEFAULT_*` を使います。モデルを未指定にすると `--model` を渡さず各 AI CLI の既定モデルを使います。`MDW_DEFAULT_MODEL` を指定している状態で別のプロバイダーへ切り替える場合は、対応するモデルも併せて指定してください。起動前に共通の `AgentClient` で設定と CLI の場所を検証し、指定された課金方式と認証状態が一致することを確認します。権限の確認には、対話型 CLI の通常の仕組みを使います。Codex は `workspace-write` と `on-request` で起動し、Claude と `agy` の権限設定は各 CLI に従います。`agy` の対話起動には `--prompt-interactive` を使います。
 
 intent は、後の AI が設計・実装・提案に迷ったときの判断材料です。対象プロジェクトの AI 向け指示には「`docs/intent.md` が存在する場合は、判断の前に読み、明示された要件や上位の指示を優先する。適用する条件が不明な場合は本人に確認する」と記載してください。生成される `AGENTS.md` を使う場合は、その生成元へ追記してください。このタスクは `AGENTS.md` を変更しません。
 
@@ -130,13 +130,20 @@ MDW_REVIEW_SECURITY_EFFORT=medium
 MDW_REVIEW_SECURITY_BILLING=subscription
 ```
 
+Antigravity CLI（`agy`）を使う例（`MDW_DEFAULT_MODEL` を未指定にすれば `agy` 側の既定モデルを使います）:
+
+```dotenv
+MDW_DEFAULT_PROVIDER=agy
+MDW_DEFAULT_EFFORT=medium
+```
+
 同じ設定は`mise.local.toml`の`[env]`にも記述できます。既存の`AWF_REVIEW_SECURITY_*`と`AWF_REVIEW_QUALITY_*`も引き続き読み込みます。
 
-Claude APIを使う場合は`MDW_REVIEW_SECURITY_BILLING=api`を指定し、秘密情報管理ツールなどを使って実行環境に`MDW_ANTHROPIC_API_KEY`を渡してください。キーは設定ファイルへ記載しないでください。キーはClaudeの子プロセスに限って`ANTHROPIC_API_KEY`として渡します。CodexのAPI課金、Claudeのクラウドプロバイダーやゲートウェイには、このPoCは対応していません。
+Claude APIを使う場合は`MDW_REVIEW_SECURITY_BILLING=api`を指定し、秘密情報管理ツールなどを使って実行環境に`MDW_ANTHROPIC_API_KEY`を渡してください。キーは設定ファイルへ記載しないでください。キーはClaudeの子プロセスに限って`ANTHROPIC_API_KEY`として渡します。CodexのAPI課金、Claudeのクラウドプロバイダーやゲートウェイには、このPoCは対応していません。`agy` には独立した認証状態確認サブコマンドがないため、起動前に `agy models` で利用可能なモデルを取得できることを確認し、課金先・アカウントは `agy` CLI 側のログイン設定に委ねます。子プロセスからは `GEMINI_API_KEY`・`GOOGLE_API_KEY`・`GOOGLE_GENAI_USE_VERTEXAI` など他経路の環境変数を除外します。
 
-実行前にCLIの認証状態を確認し、指定された方式と一致しない場合は失敗します。CLIの認証状態や課金設定は変更されることがあるため、実際の利用明細と設定も確認してください。CLIのエラー出力は秘密情報の露出を避けるため表示しません。失敗時は各CLIの認証、モデル、設定を個別に確認してください。
+実行前にCLIの認証状態（`agy` はモデル取得の疎通）を確認し、指定された方式と一致しない場合や未認証の場合は失敗します。CLIの認証状態や課金設定は変更されることがあるため、実際の利用明細と設定も確認してください。CLIのエラー出力は秘密情報の露出を避けるため表示しません。失敗時は各CLIの認証、モデル、設定を個別に確認してください。
 
-エフォートはCodexでは`model_reasoning_effort`として、Claudeでは`--effort`として指定します。利用できる値はプロバイダーとモデルによって異なります。結果には指定したエフォートを記録します。
+エフォートはCodexでは`model_reasoning_effort`として、Claudeと`agy`では`--effort`として指定します。`agy` で `gemini-3.8-flash-low` のように末尾にエフォートを含むモデルを指定した場合は、CLI 側の競合を避けるため `--effort` を省略し、結果にはモデル名に含まれるエフォートを記録します。利用できる値はプロバイダーとモデルによって異なります。結果には適用したエフォートを記録します。
 
 ## 結果と検証範囲
 
@@ -157,9 +164,9 @@ Claude APIを使う場合は`MDW_REVIEW_SECURITY_BILLING=api`を指定し、秘�
 
 ライブラリでは、`ReviewWorkspace`（`review-workspace.mts`）が worktree のルートと出力ファイルを扱い、`AgentClient`（`agent-client.mts`）が環境変数のスナップショット、ワークフローごとの設定の解決と検証、認証確認、AI CLI の構造化出力と対話の呼び出しを扱います。レビュー、Judge、interview、issue、worktree のブランチ名生成は同じクラスを使います。`workflow` には既定の `review`、`interview`、`issue`、`worktree` を指定でき、設定は各ワークフローの `MDW_*` から `MDW_DEFAULT_*` の順に解決します。レビューの役割ごとの設定と旧 `AWF_REVIEW_*` の互換性も保持します。各処理は実行ごとのインスタンスを使い、変更可能な共有のルートや出力先を持ちません。コマンド実行、JSON の読み書き、レビュー結果の検証は、それぞれのモジュールの関数として利用します。工程の順序と並列実行は、mise が実行するタスクファイルに記述します。
 
-Codexには読み取り専用のサンドボックスを指定し、Claudeにはファイル検索・読み取りとBashのツールを許可して、planモードで起動します。コミットIDを使って差分とファイルを調べるよう依頼しますが、作業ツリーのファイルを読めないように隔離するものではありません。CLI自身の設定、フック、プラグイン、管理者設定なども完全には隔離しません。CLIのツールが読めない文字コードや、Gitがバイナリーと扱うファイルがある場合、モデルによって確認の可否が異なります。`limitations`はモデルの申告であり、すべての確認漏れを自動検知するものではありません。Judgeによる判定の精度と効果は今後の検証項目です。
+Codexには読み取り専用のサンドボックスを指定し、Claudeにはファイル検索・読み取りとBashのツールを許可してplanモードで起動します。`agy`には `--mode plan` と `--sandbox` を指定し、`--output-format json` と `--json-schema` で構造化出力を取得します。コミットIDを使って差分とファイルを調べるよう依頼しますが、作業ツリーのファイルを読めないように隔離するものではありません。CLI自身の設定、フック、プラグイン、管理者設定なども完全には隔離しません。CLIのツールが読めない文字コードや、Gitがバイナリーと扱うファイルがある場合、モデルによって確認の可否が異なります。`limitations`はモデルの申告であり、すべての確認漏れを自動検知するものではありません。Judgeによる判定の精度と効果は今後の検証項目です。
 
-Python版ではmacOS上でCodexのChatGPT認証を用いた実接続を確認しました。Node.js版は代替CLIを用いてCodexとClaudeの並列実行、設定と集約を検証しています。Node.js版の実接続、WindowsとLinuxでの動作、Claude APIの課金先は未検証です。
+macOS 上で Codex の ChatGPT 認証によるレビュー実接続、および `agy` の `models` 取得と `--mode plan --sandbox --output-format json --json-schema` による構造化出力を確認しました。Node.js 版の自動テストでは代替 CLI を用いて Codex・Claude・`agy` の並列実行、設定検証、対話引数、集約を検証しています。`agy` を使った実際のレビュー・対話品質、Claude の実接続、Windows と Linux での動作、Claude API の課金先は未検証です。
 
 ## Docs: ADRの作成と検索
 
