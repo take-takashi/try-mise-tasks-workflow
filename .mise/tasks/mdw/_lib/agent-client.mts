@@ -65,16 +65,15 @@ const agyReadOnlyGitCommands = [
 	"command(git diff)",
 	"command(git show)",
 	"command(git log)",
-	"command(git status)",
 	"command(git rev-parse)",
 ];
 
 const agyDeniedGitArgPatterns = [
-	"command(regex:--output(?:=|\\s|$))",
-	"command(regex:--no-index(?:\\s|$))",
-	"command(regex:--ext-diff(?:\\s|$))",
-	"command(regex:--textconv(?:\\s|$))",
-	"command(regex:[;|&`<>])",
+	"command(regex:^.*--output(?:=|\\s|$).*)",
+	"command(regex:^.*--no-index(?:\\s|$).*)",
+	"command(regex:^.*--ext-diff(?:\\s|$).*)",
+	"command(regex:^.*--textconv(?:\\s|$).*)",
+	"command(regex:^.*[;|&`<>].*)",
 ];
 
 function agyReadOnlySettings(tools) {
@@ -113,13 +112,19 @@ function config(workflow, role, env, cwd) {
 	const model = setting("MODEL", undefined);
 	const effort = setting("EFFORT", "medium");
 	const billing = setting("BILLING", "subscription");
+	const validBilling =
+		provider === "agy"
+			? ["subscription", "api", "cli"]
+			: ["subscription", "api"];
 	if (
 		!["codex", "claude", "agy"].includes(provider) ||
-		!["subscription", "api"].includes(billing)
+		!validBilling.includes(billing)
 	)
 		throw new Error(`${scope}_* の設定が不正です。`);
 	if (provider === "codex" && billing !== "subscription")
 		throw new Error("CodexのAPI課金はこのPoCでは対応していません。");
+	if (provider === "agy" && billing === "api")
+		throw new Error("agyのAPI課金はこのPoCでは対応していません。");
 	const allowed =
 		provider === "codex"
 			? ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]

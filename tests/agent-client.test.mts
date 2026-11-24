@@ -286,10 +286,15 @@ test("agy の設定検証、エフォート・課金扱い、環境分離、stdi
 	assert.equal(settings.toolPermission, "request-review");
 	assert.ok(settings.permissions.allow.includes("command(git diff)"));
 	assert.ok(settings.permissions.allow.includes("command(git show)"));
+	assert.ok(!settings.permissions.allow.includes("command(git status)"));
 	assert.ok(settings.permissions.deny.includes("write_file(*)"));
-	assert.ok(
-		settings.permissions.deny.some((rule) => rule.includes("--output")),
+	const outputDeny = settings.permissions.deny.find((rule) =>
+		rule.includes("--output"),
 	);
+	assert.ok(outputDeny);
+	const outputRegex = new RegExp(outputDeny.slice("command(regex:".length, -1));
+	assert.ok(outputRegex.test("git diff --output=/tmp/evil HEAD"));
+	assert.ok(!outputRegex.test("git diff --no-ext-diff HEAD"));
 	assert.ok(!settings.permissions.deny.includes("command(*)"));
 	assert.ok(!settings.permissions.deny.includes("read_file(*)"));
 	assert.equal(structuredCall.options.env.GEMINI_API_KEY, undefined);
@@ -367,6 +372,19 @@ test("agy の設定検証、エフォート・課金扱い、環境分離、stdi
 				},
 			}).config(),
 		/agy に対応する値/,
+	);
+	assert.throws(
+		() =>
+			new AgentClient({
+				cwd: root,
+				workflow: "review",
+				environment: {
+					PATH: root,
+					MDW_DEFAULT_PROVIDER: "agy",
+					MDW_REVIEW_SECURITY_BILLING: "api",
+				},
+			}).config("security"),
+		/agyのAPI課金/,
 	);
 
 	const failing = new AgentClient({

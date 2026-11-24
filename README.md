@@ -139,7 +139,7 @@ MDW_DEFAULT_EFFORT=medium
 
 同じ設定は`mise.local.toml`の`[env]`にも記述できます。既存の`AWF_REVIEW_SECURITY_*`と`AWF_REVIEW_QUALITY_*`も引き続き読み込みます。
 
-Claude APIを使う場合は`MDW_REVIEW_SECURITY_BILLING=api`を指定し、秘密情報管理ツールなどを使って実行環境に`MDW_ANTHROPIC_API_KEY`を渡してください。キーは設定ファイルへ記載しないでください。キーはClaudeの子プロセスに限って`ANTHROPIC_API_KEY`として渡します。CodexのAPI課金、Claudeのクラウドプロバイダーやゲートウェイには、このPoCは対応していません。`agy` には独立した認証状態確認サブコマンドがないため、起動前に `agy models` で利用可能なモデルを取得できることを確認し、課金先・アカウントは `agy` CLI 側のログイン設定に委ねます。確認していない課金方式を誤記しないよう、`agy` の実行結果では `billing` に `"cli"` を記録します。子プロセスからは `GEMINI_API_KEY`・`GOOGLE_API_KEY`・`GOOGLE_GENAI_USE_VERTEXAI`・`AGY_ADC_AUTH` など他経路の環境変数を除外します。
+Claude APIを使う場合は`MDW_REVIEW_SECURITY_BILLING=api`を指定し、秘密情報管理ツールなどを使って実行環境に`MDW_ANTHROPIC_API_KEY`を渡してください。キーは設定ファイルへ記載しないでください。キーはClaudeの子プロセスに限って`ANTHROPIC_API_KEY`として渡します。Codexおよび`agy`のAPI課金、Claudeのクラウドプロバイダーやゲートウェイには、このPoCは対応していません。`agy` では `BILLING=api` を指定すると起動前にエラーになります。`agy` には独立した認証状態確認サブコマンドがないため、起動前に `agy models` で利用可能なモデルを取得できることを確認し、課金先・アカウントは `agy` CLI 側のログイン設定に委ねます。確認していない課金方式を誤記しないよう、`agy` の実行結果では `billing` に `"cli"` を記録します。子プロセスからは `GEMINI_API_KEY`・`GOOGLE_API_KEY`・`GOOGLE_GENAI_USE_VERTEXAI`・`AGY_ADC_AUTH` など他経路の環境変数を除外します。
 
 実行前にCLIの認証状態（`agy` はモデル取得の疎通）を確認し、指定された方式と一致しない場合や未認証の場合は失敗します。CLIの認証状態や課金設定は変更されることがあるため、実際の利用明細と設定も確認してください。CLIのエラー出力は秘密情報の露出を避けるため表示しません。失敗時は各CLIの認証、モデル、設定を個別に確認してください。
 
