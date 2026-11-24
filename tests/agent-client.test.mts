@@ -281,33 +281,79 @@ test("agy の設定検証、エフォート・課金扱い、環境分離、stdi
 	const settings = JSON.parse(
 		structuredCall.args[structuredCall.args.indexOf("--settings") + 1],
 	);
+	assert.equal(settings.agentMode, "");
 	assert.equal(settings.enableTerminalSandbox, true);
 	assert.equal(settings.toolPermission, "request-review");
 	assert.ok(settings.permissions.allow.includes("command(git diff)"));
 	assert.ok(settings.permissions.allow.includes("command(git show)"));
 	assert.ok(settings.permissions.deny.includes("write_file(*)"));
+	assert.ok(
+		settings.permissions.deny.some((rule) => rule.includes("--output")),
+	);
 	assert.ok(!settings.permissions.deny.includes("command(*)"));
+	assert.ok(!settings.permissions.deny.includes("read_file(*)"));
 	assert.equal(structuredCall.options.env.GEMINI_API_KEY, undefined);
 	assert.equal(structuredCall.options.env.AGY_ADC_AUTH, undefined);
 
-	for (const tools of ["", "Read,Grep,Glob"]) {
+	const defaultAgy = client.config();
+	assert.equal(defaultAgy.model, undefined);
+	assert.equal(defaultAgy.effort, null);
+	assert.ok(
+		!client.interactiveCommand(defaultAgy, "p").args.includes("--effort"),
+	);
+
+	for (const [tools, shouldDenyRead] of [
+		["", true],
+		["Read,Grep,Glob", false],
+	]) {
 		await client.runStructured(
-			client.config(),
+			defaultAgy,
 			"branch prompt",
 			{ type: "object" },
 			{ tools },
 		);
 		const noBashCall = calls.at(-1);
-		assert.equal(
-			noBashCall.args[noBashCall.args.indexOf("--effort") + 1],
-			"medium",
-		);
+		assert.ok(!noBashCall.args.includes("--effort"));
 		const noBashSettings = JSON.parse(
 			noBashCall.args[noBashCall.args.indexOf("--settings") + 1],
 		);
 		assert.deepEqual(noBashSettings.permissions.allow, []);
 		assert.ok(noBashSettings.permissions.deny.includes("command(*)"));
+		assert.equal(
+			noBashSettings.permissions.deny.includes("read_file(*)"),
+			shouldDenyRead,
+		);
 	}
+
+	const customModelClient = new AgentClient({
+		cwd: root,
+		workflow: "review",
+		environment: {
+			PATH: root,
+			MDW_DEFAULT_PROVIDER: "agy",
+			MDW_DEFAULT_MODEL: "custom-model",
+			MDW_DEFAULT_EFFORT: "high",
+		},
+		run: async (args) => {
+			calls.push({ args, options: {} });
+			return {
+				stdout: Buffer.from(
+					JSON.stringify({
+						status: "SUCCESS",
+						structured_output: { ok: true },
+					}),
+				),
+				stderr: Buffer.alloc(0),
+			};
+		},
+	});
+	const custom = customModelClient.config();
+	assert.equal(custom.effort, "high");
+	await customModelClient.runStructured(custom, "p", { type: "object" });
+	assert.equal(
+		calls.at(-1).args[calls.at(-1).args.indexOf("--effort") + 1],
+		"high",
+	);
 
 	assert.throws(
 		() =>

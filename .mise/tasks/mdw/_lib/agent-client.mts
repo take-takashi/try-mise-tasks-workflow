@@ -51,7 +51,12 @@ function isAgyFixedBudgetModel(model) {
 }
 
 function agyEffortArgs(model, effort) {
-	if (agyModelEffort(model) || isAgyFixedBudgetModel(model) || !effort)
+	if (
+		!model ||
+		agyModelEffort(model) ||
+		isAgyFixedBudgetModel(model) ||
+		!effort
+	)
 		return [];
 	return ["--effort", effort];
 }
@@ -64,15 +69,33 @@ const agyReadOnlyGitCommands = [
 	"command(git rev-parse)",
 ];
 
+const agyDeniedGitArgPatterns = [
+	"command(regex:--output(?:=|\\s|$))",
+	"command(regex:--no-index(?:\\s|$))",
+	"command(regex:--ext-diff(?:\\s|$))",
+	"command(regex:--textconv(?:\\s|$))",
+	"command(regex:[;|&`<>])",
+];
+
 function agyReadOnlySettings(tools) {
 	const allowedTools = String(tools ?? "")
 		.split(",")
 		.map((item) => item.trim())
 		.filter(Boolean);
 	const allowBash = allowedTools.includes("Bash");
-	const deny = ["write_file(*)", "read_url(*)", "execute_url(*)", "mcp(*)"];
-	if (!allowBash) deny.push("command(*)");
+	const allowRead = ["Read", "Grep", "Glob"].some((name) =>
+		allowedTools.includes(name),
+	);
+	const deny = [
+		"write_file(*)",
+		"read_url(*)",
+		"execute_url(*)",
+		"mcp(*)",
+		...(allowBash ? agyDeniedGitArgPatterns : ["command(*)"]),
+		...(!allowRead ? ["read_file(*)"] : []),
+	];
 	return JSON.stringify({
+		agentMode: "",
 		enableTerminalSandbox: true,
 		toolPermission: "request-review",
 		permissions: {
@@ -109,7 +132,7 @@ function config(workflow, role, env, cwd) {
 		);
 	const resolvedEffort =
 		provider === "agy"
-			? isAgyFixedBudgetModel(model)
+			? !model || isAgyFixedBudgetModel(model)
 				? null
 				: (agyModelEffort(model) ?? effort)
 			: effort;
