@@ -287,6 +287,7 @@ test("agy の設定検証、エフォート・課金扱い、環境分離、stdi
 	assert.equal(settings.toolPermission, "request-review");
 	assert.ok(settings.permissions.allow.includes("command(git diff)"));
 	assert.ok(settings.permissions.allow.includes("command(git show)"));
+	assert.ok(settings.permissions.allow.includes("command(git grep)"));
 	assert.ok(!settings.permissions.allow.includes("command(git status)"));
 	assert.ok(settings.permissions.deny.includes("write_file(*)"));
 	const outputDeny = settings.permissions.deny.find((rule) =>
@@ -296,6 +297,20 @@ test("agy の設定検証、エフォート・課金扱い、環境分離、stdi
 	const outputRegex = new RegExp(outputDeny.slice("command(regex:".length, -1));
 	assert.ok(outputRegex.test("git diff --output=/tmp/evil HEAD"));
 	assert.ok(!outputRegex.test("git diff --no-ext-diff HEAD"));
+	const pagerDeny = settings.permissions.deny.find((rule) =>
+		rule.includes("--open-files-in-pager"),
+	);
+	assert.ok(pagerDeny);
+	const pagerRegex = new RegExp(pagerDeny.slice("command(regex:".length, -1));
+	assert.ok(pagerRegex.test("git grep --open-files-in-pager=sh foo HEAD"));
+	assert.ok(!pagerRegex.test("git grep -n foo HEAD"));
+	const shortODeny = settings.permissions.deny.find((rule) =>
+		rule.includes("\\s-O"),
+	);
+	assert.ok(shortODeny);
+	const shortORegex = new RegExp(shortODeny.slice("command(regex:".length, -1));
+	assert.ok(shortORegex.test("git grep -Osh foo HEAD"));
+	assert.ok(!shortORegex.test("git grep -n foo HEAD"));
 	assert.ok(!settings.permissions.deny.includes("command(*)"));
 	assert.ok(!settings.permissions.deny.includes("read_file(*)"));
 	assert.equal(structuredCall.options.env.GEMINI_API_KEY, undefined);

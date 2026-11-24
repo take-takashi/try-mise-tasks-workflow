@@ -66,6 +66,7 @@ const agyReadOnlyGitCommands = [
 	"command(git show)",
 	"command(git log)",
 	"command(git rev-parse)",
+	"command(git grep)",
 ];
 
 const agyDeniedGitArgPatterns = [
@@ -73,6 +74,8 @@ const agyDeniedGitArgPatterns = [
 	"command(regex:^.*--no-index(?:\\s|$).*)",
 	"command(regex:^.*--ext-diff(?:\\s|$).*)",
 	"command(regex:^.*--textconv(?:\\s|$).*)",
+	"command(regex:^.*--open-files-in-pager(?:=|\\s|$).*)",
+	"command(regex:^.*\\s-O.*)",
 	"command(regex:^.*[;|&`<>].*)",
 ];
 
@@ -89,7 +92,7 @@ function agyStructuredPrompt(prompt, tools) {
 	return (
 		`${prompt}\n\n` +
 		"実行環境の制約: シェルコマンドは ; && || | ` < > で連結せず、" +
-		"単一の git diff / git show / git log / git rev-parse コマンドだけを実行してください。" +
+		"単一の git diff / git show / git log / git rev-parse / git grep コマンドだけを実行してください。" +
 		"ファイルの閲覧や検索にはシェルコマンドを使わず、専用のファイル読み取り・検索ツールを使ってください。"
 	);
 }
