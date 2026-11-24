@@ -269,7 +269,8 @@ test("agy の設定検証、エフォート・課金扱い、環境分離、stdi
 	assert.ok(structuredCall.args.includes("--disable-slash-commands"));
 	assert.ok(!structuredCall.args.includes("--effort"));
 	assert.ok(!structuredCall.args.some((arg) => arg.includes(longPrompt)));
-	assert.equal(structuredCall.options.input, longPrompt);
+	assert.ok(structuredCall.options.input.startsWith(`${longPrompt}\n\n`));
+	assert.match(structuredCall.options.input, /単一の git diff/);
 	assert.equal(
 		structuredCall.args[structuredCall.args.indexOf("--print-timeout") + 1],
 		"45s",
@@ -318,6 +319,7 @@ test("agy の設定検証、エフォート・課金扱い、環境分離、stdi
 			{ tools },
 		);
 		const noBashCall = calls.at(-1);
+		assert.equal(noBashCall.options.input, "branch prompt");
 		assert.ok(!noBashCall.args.includes("--effort"));
 		const noBashSettings = JSON.parse(
 			noBashCall.args[noBashCall.args.indexOf("--settings") + 1],
@@ -399,5 +401,25 @@ test("agy の設定検証、エフォート・課金扱い、環境分離、stdi
 	await assert.rejects(
 		failing.runStructured(failing.config(), "prompt", { type: "object" }),
 		/agyの構造化出力がありません/,
+	);
+
+	const denied = new AgentClient({
+		cwd: root,
+		workflow: "review",
+		environment: { PATH: root, MDW_DEFAULT_PROVIDER: "agy" },
+		run: async () => ({
+			stdout: Buffer.from(
+				JSON.stringify({
+					status: "SUCCESS",
+					response: "",
+					denied_actions: [{ action: "command", display_name: "Bash" }],
+				}),
+			),
+			stderr: Buffer.alloc(0),
+		}),
+	});
+	await assert.rejects(
+		denied.runStructured(denied.config(), "prompt", { type: "object" }),
+		/ツール使用が拒否されたため、構造化出力を取得できませんでした/,
 	);
 });

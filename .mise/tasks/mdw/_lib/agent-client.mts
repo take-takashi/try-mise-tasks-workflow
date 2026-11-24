@@ -76,11 +76,26 @@ const agyDeniedGitArgPatterns = [
 	"command(regex:^.*[;|&`<>].*)",
 ];
 
-function agyReadOnlySettings(tools) {
-	const allowedTools = String(tools ?? "")
+function parseToolNames(tools) {
+	return String(tools ?? "")
 		.split(",")
 		.map((item) => item.trim())
 		.filter(Boolean);
+}
+
+function agyStructuredPrompt(prompt, tools) {
+	const allowedTools = parseToolNames(tools);
+	if (!allowedTools.includes("Bash")) return prompt;
+	return (
+		`${prompt}\n\n` +
+		"実行環境の制約: シェルコマンドは ; && || | ` < > で連結せず、" +
+		"単一の git diff / git show / git log / git rev-parse コマンドだけを実行してください。" +
+		"ファイルの閲覧や検索にはシェルコマンドを使わず、専用のファイル読み取り・検索ツールを使ってください。"
+	);
+}
+
+function agyReadOnlySettings(tools) {
+	const allowedTools = parseToolNames(tools);
 	const allowBash = allowedTools.includes("Bash");
 	const allowRead = ["Read", "Grep", "Glob"].some((name) =>
 		allowedTools.includes(name),
@@ -411,7 +426,12 @@ export class AgentClient {
 					...agyEffortArgs(model, effort),
 					...(model ? ["--model", model] : []),
 				],
-				{ cwd: this.cwd, env, input: prompt, timeout },
+				{
+					cwd: this.cwd,
+					env,
+					input: agyStructuredPrompt(prompt, tools),
+					timeout,
+				},
 			);
 			let envelope: {
 				status?: string;
@@ -423,8 +443,19 @@ export class AgentClient {
 			} catch {
 				throw new Error("agyの出力が不正なJSONです。");
 			}
-			if (envelope?.status !== "SUCCESS" || !("structured_output" in envelope))
+			if (
+				envelope?.status !== "SUCCESS" ||
+				!("structured_output" in envelope)
+			) {
+				if (
+					Array.isArray(envelope?.denied_actions) &&
+					envelope.denied_actions.length
+				)
+					throw new Error(
+						"agyのツール使用が拒否されたため、構造化出力を取得できませんでした。",
+					);
 				throw new Error("agyの構造化出力がありません。");
+			}
 			data = envelope.structured_output;
 			permissionDenials = envelope.denied_actions?.length ?? 0;
 		}
