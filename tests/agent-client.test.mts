@@ -201,6 +201,7 @@ test("agy の設定検証、エフォート・課金扱い、環境分離、stdi
 			GEMINI_API_KEY: "secret-gemini-key",
 			GOOGLE_API_KEY: "secret-google-key",
 			GOOGLE_GENAI_USE_VERTEXAI: "true",
+			AGY_ADC_AUTH: "true",
 			OPENAI_API_KEY: "secret-openai-key",
 		},
 		run: async (args, options) => {
@@ -240,6 +241,7 @@ test("agy の設定検証、エフォート・課金扱い、環境分離、stdi
 	assert.equal(securityInteractive.env.GEMINI_API_KEY, undefined);
 	assert.equal(securityInteractive.env.GOOGLE_API_KEY, undefined);
 	assert.equal(securityInteractive.env.GOOGLE_GENAI_USE_VERTEXAI, undefined);
+	assert.equal(securityInteractive.env.AGY_ADC_AUTH, undefined);
 	assert.equal(securityInteractive.env.OPENAI_API_KEY, undefined);
 
 	const quality = client.config("quality");
@@ -280,26 +282,32 @@ test("agy の設定検証、エフォート・課金扱い、環境分離、stdi
 		structuredCall.args[structuredCall.args.indexOf("--settings") + 1],
 	);
 	assert.equal(settings.enableTerminalSandbox, true);
-	assert.equal(settings.toolPermission, "proceed-in-sandbox");
+	assert.equal(settings.toolPermission, "request-review");
+	assert.ok(settings.permissions.allow.includes("command(git diff)"));
+	assert.ok(settings.permissions.allow.includes("command(git show)"));
 	assert.ok(settings.permissions.deny.includes("write_file(*)"));
 	assert.ok(!settings.permissions.deny.includes("command(*)"));
 	assert.equal(structuredCall.options.env.GEMINI_API_KEY, undefined);
+	assert.equal(structuredCall.options.env.AGY_ADC_AUTH, undefined);
 
-	await client.runStructured(
-		client.config(),
-		"branch prompt",
-		{ type: "object" },
-		{ tools: "" },
-	);
-	const noToolsCall = calls.at(-1);
-	assert.equal(
-		noToolsCall.args[noToolsCall.args.indexOf("--effort") + 1],
-		"medium",
-	);
-	const noToolsSettings = JSON.parse(
-		noToolsCall.args[noToolsCall.args.indexOf("--settings") + 1],
-	);
-	assert.ok(noToolsSettings.permissions.deny.includes("command(*)"));
+	for (const tools of ["", "Read,Grep,Glob"]) {
+		await client.runStructured(
+			client.config(),
+			"branch prompt",
+			{ type: "object" },
+			{ tools },
+		);
+		const noBashCall = calls.at(-1);
+		assert.equal(
+			noBashCall.args[noBashCall.args.indexOf("--effort") + 1],
+			"medium",
+		);
+		const noBashSettings = JSON.parse(
+			noBashCall.args[noBashCall.args.indexOf("--settings") + 1],
+		);
+		assert.deepEqual(noBashSettings.permissions.allow, []);
+		assert.ok(noBashSettings.permissions.deny.includes("command(*)"));
+	}
 
 	assert.throws(
 		() =>

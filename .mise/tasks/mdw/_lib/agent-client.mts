@@ -56,13 +56,29 @@ function agyEffortArgs(model, effort) {
 	return ["--effort", effort];
 }
 
+const agyReadOnlyGitCommands = [
+	"command(git diff)",
+	"command(git show)",
+	"command(git log)",
+	"command(git status)",
+	"command(git rev-parse)",
+];
+
 function agyReadOnlySettings(tools) {
+	const allowedTools = String(tools ?? "")
+		.split(",")
+		.map((item) => item.trim())
+		.filter(Boolean);
+	const allowBash = allowedTools.includes("Bash");
 	const deny = ["write_file(*)", "read_url(*)", "execute_url(*)", "mcp(*)"];
-	if (!tools) deny.push("command(*)");
+	if (!allowBash) deny.push("command(*)");
 	return JSON.stringify({
 		enableTerminalSandbox: true,
-		toolPermission: "proceed-in-sandbox",
-		permissions: { deny },
+		toolPermission: "request-review",
+		permissions: {
+			allow: allowBash ? agyReadOnlyGitCommands : [],
+			deny,
+		},
 	});
 }
 
@@ -125,6 +141,7 @@ export function childEnvironment(provider, billing, environment = process.env) {
 		"GEMINI_API_KEY",
 		"GOOGLE_API_KEY",
 		"GOOGLE_GENAI_USE_VERTEXAI",
+		"AGY_ADC_AUTH",
 	])
 		delete env[key];
 	if (provider === "claude" && billing === "api") {
