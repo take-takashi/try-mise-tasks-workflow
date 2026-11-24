@@ -44,8 +44,9 @@ export async function review(
 	);
 	validateReview(data);
 	if (permissionDenials) {
+		const label = provider === "claude" ? "Claude" : provider;
 		data.limitations.push(
-			`Claudeのツール使用が${permissionDenials}件拒否されました。`,
+			`${label}のツール使用が${permissionDenials}件拒否されました。`,
 		);
 	}
 	const expected = new Set(manifest.changed_files.map((item) => item.path));

@@ -77,7 +77,7 @@ test("AgentClient は環境変数のスナップショットと実行先をク�
 		path.join(os.tmpdir(), "mdw-agent-clients-"),
 	);
 	t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
-	const clients = ["codex", "claude"].map((provider, index) => {
+	const clients = ["codex", "claude", "agy"].map((provider, index) => {
 		const cwd = path.join(temporary, provider);
 		const bin = path.join(cwd, "bin");
 		fs.mkdirSync(bin, { recursive: true });
@@ -92,6 +92,7 @@ test("AgentClient は環境変数のスナップショットと実行先をク�
 			MDW_REVIEW_TIMEOUT_SECONDS: String(20 + index),
 			MDW_ANTHROPIC_API_KEY: "test-key",
 			OPENAI_API_KEY: "foreign-key",
+			GEMINI_API_KEY: "foreign-gemini-key",
 		};
 		const calls = [];
 		let resultFile = "";
@@ -111,10 +112,26 @@ test("AgentClient は環境変数のスナップショットと実行先をク�
 						stdout: Buffer.from('{"authMethod":"api_key"}'),
 						stderr: Buffer.alloc(0),
 					};
+				if (args[1] === "models")
+					return {
+						stdout: Buffer.from("gemini-3.8-flash-medium\n"),
+						stderr: Buffer.alloc(0),
+					};
 				if (provider === "codex") {
 					resultFile = args[args.indexOf("-o") + 1];
 					fs.writeFileSync(resultFile, JSON.stringify({ provider }));
 					return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+				}
+				if (provider === "agy") {
+					return {
+						stdout: Buffer.from(
+							JSON.stringify({
+								status: "SUCCESS",
+								structured_output: { provider },
+							}),
+						),
+						stderr: Buffer.alloc(0),
+					};
 				}
 				return {
 					stdout: Buffer.from(
@@ -156,13 +173,14 @@ test("AgentClient は環境変数のスナップショットと実行先をク�
 		assert.equal(client.config("security").model, `model-${index}`);
 		assert.deepEqual(results[index], {
 			data: { provider },
-			permissionDenials: index,
+			permissionDenials: provider === "claude" ? 1 : 0,
 		});
 		assert.equal(calls.length, 2);
 		for (const { args, options } of calls) {
 			assert.equal(args[0], executable);
 			assert.equal(options.cwd, cwd);
 			assert.equal(options.env.OPENAI_API_KEY, undefined);
+			assert.equal(options.env.GEMINI_API_KEY, undefined);
 			assert.equal(options.env.MDW_ANTHROPIC_API_KEY, undefined);
 			assert.equal(
 				options.env.ANTHROPIC_API_KEY,

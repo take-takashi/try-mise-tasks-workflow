@@ -188,7 +188,7 @@ test("コピーしたタスクを mise で検出し、指定された名前で�
 	assert.ok(fs.existsSync(created.path));
 });
 
-test("自然文から Codex と Claude の出力を使ってブランチ名を生成する", async (t) => {
+test("自然文から Codex・Claude・agy の出力を使ってブランチ名を生成する", async (t) => {
 	const { temp, root } = fixture(t);
 	const bin = path.join(temp, "fake-ai");
 	fs.mkdirSync(bin);
@@ -200,6 +200,11 @@ test("自然文から Codex と Claude の出力を使ってブランチ名を�
 	fs.writeFileSync(
 		path.join(bin, "claude"),
 		'#!/usr/bin/env node\nif (process.argv[2] === "auth") { console.log(JSON.stringify({authMethod:"claude.ai"})); process.exit(0); } process.stdout.write(JSON.stringify({structured_output:{branch:"fix/claude-name"}}));\n',
+		{ mode: 0o755 },
+	);
+	fs.writeFileSync(
+		path.join(bin, "agy"),
+		'#!/usr/bin/env node\nif (process.argv[2] === "models") { console.log("gemini-3.8-flash-medium"); process.exit(0); } process.stdout.write(JSON.stringify({status:"SUCCESS",structured_output:{branch:"refactor/agy-name"}}));\n',
 		{ mode: 0o755 },
 	);
 	const keys = ["PATH", "MDW_WORKTREE_PROVIDER", "MDW_WORKTREE_BILLING"];
@@ -216,6 +221,11 @@ test("自然文から Codex と Claude の出力を使ってブランチ名を�
 		assert.equal(
 			(await createWorktree({ cwd: root, task: "問題を修正する" })).branch,
 			"fix/claude-name",
+		);
+		process.env.MDW_WORKTREE_PROVIDER = "agy";
+		assert.equal(
+			(await createWorktree({ cwd: root, task: "構成を整理する" })).branch,
+			"refactor/agy-name",
 		);
 	} finally {
 		for (const key of keys) {
