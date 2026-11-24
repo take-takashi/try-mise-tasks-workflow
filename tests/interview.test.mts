@@ -96,11 +96,10 @@ test("対話用の設定を優先し、API キーを適切な子プロセスに�
 	assert.equal(claude.env.OPENAI_API_KEY, undefined);
 	assert.equal(env.MDW_ANTHROPIC_API_KEY, "test-key");
 	const codex = command({
-		MDW_DEFAULT_MODEL: "default-model",
 		MDW_DEFAULT_EFFORT: "low",
 	});
 	assert.equal(codex.executable, path.join(bin, "codex"));
-	assert.equal(codex.args[codex.args.indexOf("--model") + 1], "default-model");
+	assert.ok(!codex.args.includes("--model"));
 	assert.ok(codex.args.includes('model_reasoning_effort="low"'));
 	assert.ok(!codex.args.includes("exec"));
 	assert.ok(!claude.args.includes("-p"));

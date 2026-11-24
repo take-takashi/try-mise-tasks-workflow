@@ -151,6 +151,7 @@ test("mise から指摘を評価し、採用分だけを指定の PR のコミ�
 			"const fs = require('node:fs');",
 			"const args = process.argv.slice(2);",
 			"if (args[0] === 'login') { console.log('Logged in using ChatGPT'); process.exit(0); }",
+			"if (args.includes('--model')) process.exit(12);",
 			"const prompt = fs.readFileSync(0, 'utf8');",
 			`if (!prompt.includes(${JSON.stringify(f.summary.target.head_commit)}) || !prompt.includes('quality:1')) process.exit(11);`,
 			`fs.writeFileSync(args[args.indexOf('-o') + 1], JSON.stringify({ decisions: ${JSON.stringify(decisions)} }));`,
@@ -162,6 +163,7 @@ test("mise から指摘を評価し、採用分だけを指定の PR のコミ�
 	const saved = JSON.parse(
 		fs.readFileSync(path.join(f.output, "judged.json"), "utf8"),
 	);
+	assert.deepEqual(saved.judge, { provider: "codex", model: null });
 	assert.deepEqual(saved.decisions, [...decisions].reverse());
 	const body = f.ok(...f.task("post", "--dry-run"));
 	assert.match(body, /採用 1 件 \/ 評価 2 件/);

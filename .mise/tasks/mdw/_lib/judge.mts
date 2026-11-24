@@ -131,7 +131,7 @@ export async function judgeFindings({ target, candidates, workspace }) {
 	const limitations = permissionDenials
 		? [`Claudeのツール使用が${permissionDenials}件拒否されました。`]
 		: [];
-	return { judge: { provider, model }, limitations, decisions };
+	return { judge: { provider, model: model ?? null }, limitations, decisions };
 }
 
 export function saveJudgment({ workspace, target, source }, evaluation) {

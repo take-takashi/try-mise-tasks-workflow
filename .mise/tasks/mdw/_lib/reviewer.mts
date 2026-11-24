@@ -81,7 +81,7 @@ export async function review(
 	const result = {
 		reviewer_id: role,
 		provider,
-		model,
+		model: model ?? null,
 		effort,
 		billing,
 		duration_seconds: duration,

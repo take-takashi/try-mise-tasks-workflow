@@ -207,6 +207,8 @@ test("コピーしたMDWをmiseから実行し、異なるプロバイダーを�
 		"if (name === 'codex' && process.env.ANTHROPIC_API_KEY) process.exit(9);",
 		"if (name === 'codex' && args[0] === 'login') { console.log('Logged in using ChatGPT'); process.exit(0); }",
 		"if (name === 'claude' && args[0] === 'auth') { console.log(JSON.stringify({authMethod:'api_key'})); process.exit(0); }",
+		"if (name === 'codex' && args.includes('--model')) process.exit(13);",
+		"if (name === 'claude' && args[args.indexOf('--model') + 1] !== 'sonnet') process.exit(14);",
 		"process.stdin.resume(); process.stdin.on('end', () => {",
 		"  fs.writeFileSync(path.join(process.env.TEST_CONTROL, name), 'started');",
 		"  const end = Date.now() + 3000; const other = name === 'codex' ? 'claude' : 'codex';",
@@ -293,8 +295,16 @@ test("コピーしたMDWをmiseから実行し、異なるプロバイダーを�
 		"claude",
 	);
 	assert.equal(
+		merged.reviews.find((item) => item.reviewer_id === "security").model,
+		"sonnet",
+	);
+	assert.equal(
 		merged.reviews.find((item) => item.reviewer_id === "quality").provider,
 		"codex",
+	);
+	assert.equal(
+		merged.reviews.find((item) => item.reviewer_id === "quality").model,
+		null,
 	);
 	assert.ok(merged.duration_seconds >= 0);
 	fs.rmSync(path.join(control, "codex"));
