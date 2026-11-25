@@ -155,6 +155,7 @@ Claude APIを使う場合は`MDW_REVIEW_SECURITY_BILLING=api`を指定し、秘�
   "duration_seconds": 32.1,
   "reviews": [
     {"reviewer_id": "security", "provider": "codex", "model": null, "effort": "medium", "billing": "subscription", "duration_seconds": 30.0, "target": {}, "review": {"findings": [], "limitations": [], "file_coverage": [{"file": "app.py", "status": "reviewed", "detail": "コミット間の差分を確認"}]}},
+    {"reviewer_id": "architecture", "provider": "codex", "model": null, "effort": "medium", "billing": "subscription", "duration_seconds": 31.0, "target": {}, "review": {"findings": [], "limitations": [], "file_coverage": [{"file": "app.py", "status": "reviewed", "detail": "コミット間の差分を確認"}]}},
     {"reviewer_id": "quality", "provider": "codex", "model": null, "effort": "medium", "billing": "subscription", "duration_seconds": 32.0, "target": {}, "review": {"findings": [], "limitations": [], "file_coverage": [{"file": "app.py", "status": "reviewed", "detail": "コミット間の差分を確認"}]}}
   ]
 }

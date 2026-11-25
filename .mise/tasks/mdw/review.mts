@@ -5,6 +5,7 @@
 
 import { AgentClient } from "./_lib/agent-client.mts";
 import { cli } from "./_lib/cli.mts";
+import { validateReviewPrompts } from "./_lib/review-data.mts";
 import {
 	prepare,
 	requireReviewResult,
@@ -18,6 +19,8 @@ export async function run(options = {}) {
 	// 実行する worktree と AI CLI の実行環境を用意する。
 	const workspace = await ReviewWorkspace.discover(options.cwd);
 	const agent = new AgentClient({ cwd: workspace.root });
+	// すべての観点のプロンプトが揃っているか先に確認する。
+	validateReviewPrompts();
 	// 両方のレビューが同じ差分を見るように、対象のコミットと変更ファイルを固定する。
 	const manifest = await prepare(options, workspace);
 	// レビューに使う AI CLI の設定と認証を確認する。

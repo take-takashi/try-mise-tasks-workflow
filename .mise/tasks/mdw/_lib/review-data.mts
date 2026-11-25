@@ -27,6 +27,18 @@ function readReviewPromptFile(promptDir, filename) {
 	return content;
 }
 
+export function validateReviewPrompts(
+	targetRoles = Object.keys(roles),
+	{ promptDir = defaultPromptDir } = {},
+) {
+	readReviewPromptFile(promptDir, "base.md");
+	for (const role of targetRoles) {
+		if (!Object.hasOwn(roles, role))
+			throw new Error(`不明なレビューの観点です: ${role}`);
+		readReviewPromptFile(promptDir, `${role}.md`);
+	}
+}
+
 // プレフィックスキャッシュを活かすため、全ロール共通の静的ルール → ロール固有の静的観点 → 動的コンテキストの順に組み立てる。
 export function buildReviewPrompt(
 	role,

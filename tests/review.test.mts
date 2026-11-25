@@ -449,13 +449,56 @@ test("コピーしたMDWをmiseから実行し、異なるプロバイダーを�
 	command(
 		"mise",
 		["run", "mdw:review:quality", "--base", base, "--head", head],
-		{ cwd, env },
+		{
+			cwd,
+			env: {
+				...env,
+				MDW_REVIEW_SECURITY_PROVIDER: "invalid",
+				MDW_REVIEW_ARCHITECTURE_PROVIDER: "invalid",
+			},
+		},
 	);
 	assert.ok(fs.existsSync(path.join(root, ".reviews/quality.json")));
 	assert.ok(!fs.existsSync(path.join(root, ".reviews/security.json")));
 	assert.ok(!fs.existsSync(path.join(root, ".reviews/architecture.json")));
+	command(
+		process.execPath,
+		[
+			"--input-type=module",
+			"-e",
+			"import { runRole } from " +
+				JSON.stringify(library) +
+				'; const result = await runRole("architecture", {baseRef: process.env.TEST_BASE, headRef: process.env.TEST_HEAD}); if (result.reviewer_id !== "architecture") throw new Error("invalid role result");',
+		],
+		{
+			cwd,
+			env: {
+				...env,
+				MDW_REVIEW_SECURITY_PROVIDER: "invalid",
+				MDW_REVIEW_QUALITY_PROVIDER: "invalid",
+			},
+		},
+	);
+	assert.ok(fs.existsSync(path.join(root, ".reviews/architecture.json")));
+	resetControl();
+	const archPromptPath = path.join(tasks, "mdw/prompts/review/architecture.md");
+	const savedArchPrompt = fs.readFileSync(archPromptPath, "utf8");
+	fs.rmSync(archPromptPath);
+	try {
+		const missingPrompt = spawnSync(
+			"mise",
+			["run", "mdw:review", "--base", base, "--head", head],
+			{ cwd, env: { ...env, TEST_SOLO: "0" }, encoding: "utf8" },
+		);
+		assert.equal(missingPrompt.status, 1);
+		assert.match(missingPrompt.stderr, /読み取れません: architecture\.md/);
+		for (const name of ["codex", "claude", "agy"])
+			assert.ok(!fs.existsSync(path.join(control, name)));
+	} finally {
+		fs.writeFileSync(archPromptPath, savedArchPrompt);
+	}
 	command("mise", ["run", "mdw:review:check"], { cwd, env });
-	assert.ok(fs.existsSync(path.join(root, ".reviews/quality.json")));
+	assert.ok(fs.existsSync(path.join(root, ".reviews/architecture.json")));
 	command(
 		"mise",
 		["run", "mdw:review:prepare", "--base", base, "--head", head],
