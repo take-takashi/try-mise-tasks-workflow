@@ -66,7 +66,7 @@ function fixture(t) {
 	);
 	const summary = {
 		target,
-		reviews: ["security", "quality"].map((reviewer_id) => ({
+		reviews: ["security", "architecture", "quality"].map((reviewer_id) => ({
 			target,
 			reviewer_id,
 			review: { findings: [], limitations: [], file_coverage: [] },
@@ -124,7 +124,7 @@ test("mise から指摘を評価し、採用分だけを指定の PR のコミ�
 		recommendation: "修正案",
 	};
 	f.summary.reviews[0].review.findings.push(finding);
-	f.summary.reviews[1].review.findings.push({
+	f.summary.reviews[2].review.findings.push({
 		...finding,
 		title: "重複した指摘",
 	});

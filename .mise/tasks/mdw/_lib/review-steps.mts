@@ -2,17 +2,22 @@ import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual, TextDecoder } from "node:util";
 import { AgentClient } from "./agent-client.mts";
 import { runCommand } from "./command.mts";
-import { roles, validateReview } from "./review-data.mts";
+import {
+	roles,
+	validateReview,
+	validateReviewPrompts,
+} from "./review-data.mts";
 import { ReviewWorkspace } from "./review-workspace.mts";
 import { review } from "./reviewer.mts";
 
 export async function runRole(role, options = {}) {
 	if (!Object.hasOwn(roles, role))
 		throw new Error("不明なレビューの観点です: " + role);
+	validateReviewPrompts([role]);
 	const workspace = await ReviewWorkspace.discover(options.cwd);
 	const agent = new AgentClient({ cwd: workspace.root });
 	const manifest = await prepare(options, workspace);
-	await agent.check();
+	await agent.check([role]);
 	return review(role, manifest, workspace, agent);
 }
 

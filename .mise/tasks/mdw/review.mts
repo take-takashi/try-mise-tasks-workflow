@@ -5,6 +5,7 @@
 
 import { AgentClient } from "./_lib/agent-client.mts";
 import { cli } from "./_lib/cli.mts";
+import { validateReviewPrompts } from "./_lib/review-data.mts";
 import {
 	prepare,
 	requireReviewResult,
@@ -18,16 +19,20 @@ export async function run(options = {}) {
 	// 実行する worktree と AI CLI の実行環境を用意する。
 	const workspace = await ReviewWorkspace.discover(options.cwd);
 	const agent = new AgentClient({ cwd: workspace.root });
+	// すべての観点のプロンプトが揃っているか先に確認する。
+	validateReviewPrompts();
 	// 両方のレビューが同じ差分を見るように、対象のコミットと変更ファイルを固定する。
 	const manifest = await prepare(options, workspace);
 	// レビューに使う AI CLI の設定と認証を確認する。
 	await agent.check();
 
-	// 二つのレビューを並列に実行し、両方の成否が確定するまで待つ。
+	// 三つのレビューを並列に実行し、すべての成否が確定するまで待つ。
 	const outcomes = await Promise.allSettled([
-		// 認証や入力処理などの安全性を確認する。
+		// OWASP の視点から認証や入力処理などの安全性を確認する。
 		review("security", manifest, workspace, agent),
-		// 変更の正しさやテストの不足を確認する。
+		// 設計方針との整合や運用・障害耐性の問題を確認する。
+		review("architecture", manifest, workspace, agent),
+		// 変更の正しさやテスト観点の妥当性を確認する。
 		review("quality", manifest, workspace, agent),
 	]);
 
@@ -49,7 +54,7 @@ export async function run(options = {}) {
 if (import.meta.main) {
 	// ヘルプの表示と、失敗時の終了コードの設定を cli() に任せる。
 	await cli(
-		"セキュリティと品質の観点で並列レビューします。",
+		"セキュリティ、アーキテクチャ・運用、品質の観点で並列レビューします。",
 		// mise が渡した --base と --head を使ってレビューを開始する。
 		() =>
 			run({ baseRef: process.env.usage_base, headRef: process.env.usage_head }),

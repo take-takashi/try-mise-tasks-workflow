@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { runCommand } from "./command.mts";
 import { readJson, writeJson } from "./json.mts";
+import { roles } from "./review-data.mts";
 
 // 一つの worktree の場所を保持し、レビュー用のファイルを読み書きする。
 export class ReviewWorkspace {
@@ -38,8 +39,7 @@ export class ReviewWorkspace {
 		for (const name of [
 			"merged.json",
 			"judged.json",
-			"security.json",
-			"quality.json",
+			...Object.keys(roles).map((role) => `${role}.json`),
 			"manifest.json",
 			"diff.txt",
 		]) {
