@@ -76,7 +76,7 @@ mise run mdw:issue:new "agy プロバイダーを追加したい"
 
 ## レビューと修正を進める
 
-`mdw:review` は、ベースとヘッドの共通祖先からヘッドまでのコミット済みの差分を対象に、品質とセキュリティを並列に確認します。既定値は `main` と `HEAD` です。PR では実際のベースブランチに合わせてください。
+`mdw:review` は、ベースとヘッドの共通祖先からヘッドまでのコミット済みの差分を対象に、セキュリティ（OWASP ベース）・アーキテクチャ・運用・品質（テスト妥当性を含む）の 3 観点を並列に確認します。既定値は `main` と `HEAD` です。PR では実際のベースブランチに合わせてください。各観点のプロンプトは `.mise/tasks/mdw/prompts/review/` で調整できます。
 
 ```sh
 mise run mdw:review --base origin/main --head HEAD

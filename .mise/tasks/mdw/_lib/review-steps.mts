@@ -12,7 +12,7 @@ export async function runRole(role, options = {}) {
 	const workspace = await ReviewWorkspace.discover(options.cwd);
 	const agent = new AgentClient({ cwd: workspace.root });
 	const manifest = await prepare(options, workspace);
-	await agent.check();
+	await agent.check([role]);
 	return review(role, manifest, workspace, agent);
 }
 

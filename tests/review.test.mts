@@ -12,7 +12,10 @@ import {
 } from "../.mise/tasks/mdw/_lib/agent-client.mts";
 import { runCommand } from "../.mise/tasks/mdw/_lib/command.mts";
 import { prepare, runRole } from "../.mise/tasks/mdw/_lib/review.mts";
-import { validateReview } from "../.mise/tasks/mdw/_lib/review-data.mts";
+import {
+	buildReviewPrompt,
+	validateReview,
+} from "../.mise/tasks/mdw/_lib/review-data.mts";
 
 const project = fileURLToPath(new URL("../", import.meta.url));
 function command(file, args, options) {
@@ -121,6 +124,59 @@ test("部品は不正なレビュー対象や観点を処理前に拒否する",
 	await assert.rejects(runRole("unknown"), /不明なレビューの観点/);
 });
 
+test("レビュープロンプトは静的共通部・静的観点・動的対象の順に組み立てられ、欠損を検出する", (t) => {
+	const manifest = {
+		merge_base_commit: "1111111111111111111111111111111111111111",
+		head_commit: "2222222222222222222222222222222222222222",
+		changed_files: [
+			{ path: "app.mts", binary: false, path_encoding_error: false },
+		],
+	};
+	const security = buildReviewPrompt("security", manifest);
+	const architecture = buildReviewPrompt("architecture", manifest);
+	const quality = buildReviewPrompt("quality", manifest);
+	const base = fs
+		.readFileSync(
+			path.join(project, ".mise/tasks/mdw/prompts/review/base.md"),
+			"utf8",
+		)
+		.trim();
+	for (const [role, prompt] of [
+		["security", security],
+		["architecture", architecture],
+		["quality", quality],
+	]) {
+		const roleGuide = fs
+			.readFileSync(
+				path.join(project, `.mise/tasks/mdw/prompts/review/${role}.md`),
+				"utf8",
+			)
+			.trim();
+		assert.ok(prompt.startsWith(`${base}\n\n${roleGuide}\n\n## レビュー対象`));
+		const dynamicIndex = prompt.indexOf("## レビュー対象");
+		assert.ok(prompt.indexOf(manifest.merge_base_commit) > dynamicIndex);
+		assert.ok(prompt.indexOf(manifest.head_commit) > dynamicIndex);
+		assert.ok(prompt.indexOf("app.mts") > dynamicIndex);
+	}
+	assert.throws(
+		() => buildReviewPrompt("unknown", manifest),
+		/不明なレビューの観点/,
+	);
+
+	const brokenDir = fs.mkdtempSync(path.join(os.tmpdir(), "mdw-prompt-test-"));
+	t.after(() => fs.rmSync(brokenDir, { recursive: true, force: true }));
+	assert.throws(
+		() => buildReviewPrompt("security", manifest, { promptDir: brokenDir }),
+		/読み取れません/,
+	);
+	fs.writeFileSync(path.join(brokenDir, "base.md"), "   \n");
+	fs.writeFileSync(path.join(brokenDir, "security.md"), "security");
+	assert.throws(
+		() => buildReviewPrompt("security", manifest, { promptDir: brokenDir }),
+		/空です/,
+	);
+});
+
 test("Gitの変更一覧からバイナリーと非UTF-8のファイル名を保持する", (t) => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "mdw-git-bytes-"));
 	t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -202,28 +258,31 @@ test("コピーしたMDWをmiseから実行し、異なるプロバイダーを�
 		"#!/usr/bin/env node",
 		"const fs = require('node:fs'), path = require('node:path');",
 		"const name = path.basename(process.argv[1]), args = process.argv.slice(2);",
-		"if (process.env.MDW_ANTHROPIC_API_KEY || process.env.AWF_ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY) process.exit(7);",
+		"if (process.env.MDW_ANTHROPIC_API_KEY || process.env.AWF_ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY) process.exit(7);",
 		"if (name === 'claude' && process.env.ANTHROPIC_API_KEY !== 'test-key') process.exit(8);",
-		"if (name === 'codex' && process.env.ANTHROPIC_API_KEY) process.exit(9);",
+		"if (name !== 'claude' && process.env.ANTHROPIC_API_KEY) process.exit(9);",
 		"if (name === 'codex' && args[0] === 'login') { console.log('Logged in using ChatGPT'); process.exit(0); }",
 		"if (name === 'claude' && args[0] === 'auth') { console.log(JSON.stringify({authMethod:'api_key'})); process.exit(0); }",
+		"if (name === 'agy' && args[0] === 'models') { console.log('gemini-4-neon-medium Gemini 4 Neon (Medium)'); process.exit(0); }",
 		"if (name === 'codex' && args.includes('--model')) process.exit(13);",
 		"if (name === 'claude' && args[args.indexOf('--model') + 1] !== 'sonnet') process.exit(14);",
+		"if (name === 'agy' && args[args.indexOf('--model') + 1] !== 'gemini-4-neon-medium') process.exit(15);",
 		"process.stdin.resume(); process.stdin.on('end', () => {",
 		"  fs.writeFileSync(path.join(process.env.TEST_CONTROL, name), 'started');",
-		"  const end = Date.now() + 3000; const other = name === 'codex' ? 'claude' : 'codex';",
+		"  const end = Date.now() + 3000; const peers = ['codex', 'claude', 'agy'].filter((item) => item !== name);",
 		"  const timer = setInterval(() => {",
 		"    if (Date.now() > end) { clearInterval(timer); process.exit(10); }",
-		"    if (process.env.TEST_SOLO !== '1' && !fs.existsSync(path.join(process.env.TEST_CONTROL, other))) return;",
+		"    if (process.env.TEST_SOLO !== '1' && !peers.every((peer) => fs.existsSync(path.join(process.env.TEST_CONTROL, peer)))) return;",
 		"    clearInterval(timer); const review = {findings: [], limitations: [], file_coverage: [{file:'sample.txt', status:'reviewed', detail:'fake'}]};",
 		"    if (process.env.TEST_FAIL_REVIEW === name) process.exit(12);",
 		"    if (name === 'codex') fs.writeFileSync(args[args.indexOf('-o') + 1], JSON.stringify(review));",
+		"    else if (name === 'agy') console.log(JSON.stringify({status:'SUCCESS', structured_output:review, denied_actions:[]}));",
 		"    else console.log(JSON.stringify({structured_output:review, permission_denials:[]}));",
 		"  }, 20);",
 		"});",
 		"",
 	].join("\n");
-	for (const name of ["codex", "claude"]) {
+	for (const name of ["codex", "claude", "agy"]) {
 		fs.writeFileSync(path.join(bin, name), fake);
 		fs.chmodSync(path.join(bin, name), 0o755);
 	}
@@ -247,9 +306,12 @@ test("コピーしたMDWをmiseから実行し、異なるプロバイダーを�
 		MDW_REVIEW_SECURITY_PROVIDER: "claude",
 		MDW_REVIEW_SECURITY_MODEL: "sonnet",
 		MDW_REVIEW_SECURITY_BILLING: "api",
+		MDW_REVIEW_ARCHITECTURE_PROVIDER: "agy",
+		MDW_REVIEW_ARCHITECTURE_MODEL: "gemini-4-neon-medium",
 		MDW_ANTHROPIC_API_KEY: "test-key",
 		AWF_ANTHROPIC_API_KEY: "old-key",
 		OPENAI_API_KEY: "other",
+		GEMINI_API_KEY: "other-gemini",
 	});
 	const list = JSON.parse(
 		command("mise", ["tasks", "ls", "--json"], { cwd, env }),
@@ -261,6 +323,7 @@ test("コピーしたMDWをmiseから実行し、異なるプロバイダーを�
 		"mdw:review:prepare",
 		"mdw:review:check",
 		"mdw:review:security",
+		"mdw:review:architecture",
 		"mdw:review:quality",
 	])
 		assert.ok(entries.has(name));
@@ -268,6 +331,7 @@ test("コピーしたMDWをmiseから実行し、異なるプロバイダーを�
 		"mdw:review",
 		"mdw:review:check",
 		"mdw:review:security",
+		"mdw:review:architecture",
 		"mdw:review:quality",
 	]) {
 		assert.deepEqual(entries.get(name).depends, []);
@@ -287,6 +351,7 @@ test("コピーしたMDWをmiseから実行し、異なるプロバイダーを�
 	assert.equal(merged.target.base_ref, base);
 	assert.equal(merged.target.head_ref, head);
 	assert.deepEqual(merged.reviews.map((item) => item.reviewer_id).sort(), [
+		"architecture",
 		"quality",
 		"security",
 	]);
@@ -299,6 +364,14 @@ test("コピーしたMDWをmiseから実行し、異なるプロバイダーを�
 		"sonnet",
 	);
 	assert.equal(
+		merged.reviews.find((item) => item.reviewer_id === "architecture").provider,
+		"agy",
+	);
+	assert.equal(
+		merged.reviews.find((item) => item.reviewer_id === "architecture").model,
+		"gemini-4-neon-medium",
+	);
+	assert.equal(
 		merged.reviews.find((item) => item.reviewer_id === "quality").provider,
 		"codex",
 	);
@@ -307,8 +380,11 @@ test("コピーしたMDWをmiseから実行し、異なるプロバイダーを�
 		null,
 	);
 	assert.ok(merged.duration_seconds >= 0);
-	fs.rmSync(path.join(control, "codex"));
-	fs.rmSync(path.join(control, "claude"));
+	const resetControl = () => {
+		for (const name of ["codex", "claude", "agy"])
+			fs.rmSync(path.join(control, name), { force: true });
+	};
+	resetControl();
 	command("mise", ["run", "mdw:review"], { cwd, env });
 	merged = JSON.parse(
 		fs.readFileSync(path.join(root, ".reviews/merged.json"), "utf8"),
@@ -316,8 +392,7 @@ test("コピーしたMDWをmiseから実行し、異なるプロバイダーを�
 	assert.equal(merged.target.base_commit, base);
 	assert.equal(merged.target.base_ref, "main");
 	assert.equal(merged.target.head_ref, "HEAD");
-	fs.rmSync(path.join(control, "codex"));
-	fs.rmSync(path.join(control, "claude"));
+	resetControl();
 	const failed = spawnSync("mise", ["run", "mdw:review"], {
 		cwd,
 		env: { ...env, TEST_FAIL_REVIEW: "claude" },
@@ -326,9 +401,9 @@ test("コピーしたMDWをmiseから実行し、異なるプロバイダーを�
 	assert.equal(failed.status, 1, failed.stderr);
 	assert.match(failed.stderr, /終了コード 12/);
 	assert.ok(fs.existsSync(path.join(root, ".reviews/quality.json")));
+	assert.ok(fs.existsSync(path.join(root, ".reviews/architecture.json")));
 	assert.ok(!fs.existsSync(path.join(root, ".reviews/merged.json")));
-	fs.rmSync(path.join(control, "codex"));
-	fs.rmSync(path.join(control, "claude"));
+	resetControl();
 	env.TEST_BASE = base;
 	env.TEST_HEAD = head;
 	const library = pathToFileURL(path.join(tasks, "mdw/_lib/review.mts")).href;
@@ -339,7 +414,7 @@ test("コピーしたMDWをmiseから実行し、異なるプロバイダーを�
 			"-e",
 			"import { run } from " +
 				JSON.stringify(library) +
-				'; const result = await run({baseRef: process.env.TEST_BASE, headRef: process.env.TEST_HEAD}); if (result.reviews.length !== 2) throw new Error("invalid result");',
+				'; const result = await run({baseRef: process.env.TEST_BASE, headRef: process.env.TEST_HEAD}); if (result.reviews.length !== 3) throw new Error("invalid result");',
 		],
 		{ cwd, env },
 	);
@@ -355,6 +430,7 @@ test("コピーしたMDWをmiseから実行し、異なるプロバイダーを�
 		{ cwd, env },
 	);
 	assert.ok(fs.existsSync(path.join(root, ".reviews/security.json")));
+	assert.ok(!fs.existsSync(path.join(root, ".reviews/architecture.json")));
 	assert.ok(!fs.existsSync(path.join(root, ".reviews/quality.json")));
 	assert.ok(!fs.existsSync(path.join(root, ".reviews/merged.json")));
 	let manifest = JSON.parse(
@@ -364,11 +440,20 @@ test("コピーしたMDWをmiseから実行し、異なるプロバイダーを�
 	assert.equal(manifest.head_ref, head);
 	command(
 		"mise",
+		["run", "mdw:review:architecture", "--base", base, "--head", head],
+		{ cwd, env },
+	);
+	assert.ok(fs.existsSync(path.join(root, ".reviews/architecture.json")));
+	assert.ok(!fs.existsSync(path.join(root, ".reviews/security.json")));
+	assert.ok(!fs.existsSync(path.join(root, ".reviews/quality.json")));
+	command(
+		"mise",
 		["run", "mdw:review:quality", "--base", base, "--head", head],
 		{ cwd, env },
 	);
 	assert.ok(fs.existsSync(path.join(root, ".reviews/quality.json")));
 	assert.ok(!fs.existsSync(path.join(root, ".reviews/security.json")));
+	assert.ok(!fs.existsSync(path.join(root, ".reviews/architecture.json")));
 	command("mise", ["run", "mdw:review:check"], { cwd, env });
 	assert.ok(fs.existsSync(path.join(root, ".reviews/quality.json")));
 	command(

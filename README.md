@@ -1,6 +1,6 @@
 # MDW: mise dev workflows
 
-MDWは、miseのファイルタスクを公開入口にして、組み合わせ可能なワークフローの部品を実行する基盤のPoCです。セキュリティと品質の観点から並列にコードレビューする機能を備えています。Node.js 24の標準機能を使います。
+MDWは、miseのファイルタスクを公開入口にして、組み合わせ可能なワークフローの部品を実行する基盤のPoCです。セキュリティ、アーキテクチャ・運用、品質の3つの観点から並列にコードレビューする機能を備えています。Node.js 24の標準機能を使います。
 
 `.mise/tasks/mdw/`フォルダーを別のプロジェクトの`.mise/tasks/`にコピーし、必要に応じて`MDW_`環境変数を設定して利用できます。コピー先ではNode.js 24、Git、利用するCLIを実行できるようにし、macOSとLinuxではタスクファイルに実行権限を付けてください。共有のモデル設定を使う場合は`.mdw/models.env`と`mise.toml`のenvファイル設定もコピーしてください。生成される`.reviews/`はGitの管理対象から除外してください。
 
@@ -36,7 +36,7 @@ mise run mdw:review
 mise run mdw:review --base origin/main --head HEAD
 ```
 
-`mdw:review`は、対象コミットの固定、設定と認証の確認、セキュリティと品質の並列レビュー、結果の集約を行い、`.reviews/merged.json`を作成します。`mdw:review:prepare`、`mdw:review:security`、`mdw:review:quality`も同じ`--base`と`--head`を受け付けます。個別のレビューでは対象の準備と認証の確認を行ってから、その観点だけを実行します。Node.jsは差分の本文を読み込まず、各CLIには同じコミットIDとファイル一覧を渡し、差分と周辺コードの確認を依頼します。同じ作業ディレクトリーで複数のレビューを同時に実行しないでください。
+`mdw:review`は、対象コミットの固定、設定と認証の確認、セキュリティ（OWASP ベース）・アーキテクチャ・運用・品質（テスト妥当性を含む）の 3 並列レビュー、結果の集約を行い、`.reviews/merged.json`を作成します。`mdw:review:prepare`、`mdw:review:security`、`mdw:review:architecture`、`mdw:review:quality`も同じ`--base`と`--head`を受け付けます。個別のレビューでは対象の準備と該当観点の認証の確認を行ってから、その観点だけを実行します。レビュープロンプトは `.mise/tasks/mdw/prompts/review/`（共通の `base.md` と観点別の `security.md` / `architecture.md` / `quality.md`）に外出ししており、プレフィックスキャッシュを活かすため「共通ルール（静的）→ 観点別ルール（静的）→ 対象コミットと変更ファイル一覧（動的）」の順で組み立てます。Node.jsは差分の本文を読み込まず、各CLIには同じコミットIDとファイル一覧を渡し、差分と周辺コードの確認を依頼します。同じ作業ディレクトリーで複数のレビューを同時に実行しないでください。
 
 旧`awf:*`タスクは`mdw:*`へ統合しました。たとえば、`awf:review`は`mdw:review`に、`awf:check`は`mdw:check`に変更してください。
 
@@ -166,7 +166,7 @@ Claude APIを使う場合は`MDW_REVIEW_SECURITY_BILLING=api`を指定し、秘�
 
 Codexには読み取り専用のサンドボックスを指定し、Claudeにはファイル検索・読み取りとBashのツールを許可してplanモードで起動します。`agy`には `--input-format text` で標準入力からプロンプトを渡し、`--sandbox`、`--disable-slash-commands`、およびセッション限定の `--settings`（`agentMode: ""`、`toolPermission: "request-review"`、`write_file(*)`・外部アクセス・MCP の拒否、`Bash` 許可時は `git diff` / `git show` / `git log` / `git rev-parse` の許可と `--output` 等やシェル演算子の `deny`、読み取りツール未指定時は `read_file(*)` の `deny`）を指定したうえで、`--output-format json` と `--json-schema` で構造化出力を取得します（拒否されたツール呼び出し `denied_actions` は `limitations` に記録します。ただし `agy` のターミナルサンドボックスやコマンド権限ルールはワークスペース書き込みや Git の外部差分・テキスト変換ドライバーを OS レベルで完全隔離するものではありません）。コミットIDを使って差分とファイルを調べるよう依頼しますが、作業ツリーのファイルを読めないように隔離するものではありません。CLI自身の設定、フック、プラグイン、管理者設定なども完全には隔離しません。CLIのツールが読めない文字コードや、Gitがバイナリーと扱うファイルがある場合、モデルによって確認の可否が異なります。`limitations`はモデルの申告であり、すべての確認漏れを自動検知するものではありません。Judgeによる判定の精度と効果は今後の検証項目です。
 
-macOS 上で Codex の ChatGPT 認証によるレビュー実接続、および `agy` の `models` 取得と構造化出力・並列レビューの実接続を確認しました。Node.js 版の自動テストでは、代替 CLI を用いて Codex・Claude の mise 起点集約テスト（`tests/review.test.mts`）、および Codex・Claude・`agy` のクライアント設定・並列呼び出し・対話引数・ブランチ名生成テスト（`tests/agent-client.test.mts`、`tests/review-context.test.mts`、`tests/interview.test.mts`、`tests/issue.test.mts`、`tests/worktree.test.mts`）を検証しています。`agy` を使った対話品質、Claude の実接続、Windows と Linux での動作、Claude API の課金先は未検証です。
+macOS 上で Codex の ChatGPT 認証によるレビュー実接続、および `agy` の `models` 取得と構造化出力・並列レビューの実接続を確認しました。Node.js 版の自動テストでは、代替 CLI を用いて Codex・Claude・`agy` による 3 観点（`security` / `architecture` / `quality`）の mise 起点並列集約テスト（`tests/review.test.mts`）、および各プロバイダーのクライアント設定・並列呼び出し・対話引数・ブランチ名生成テスト（`tests/agent-client.test.mts`、`tests/review-context.test.mts`、`tests/interview.test.mts`、`tests/issue.test.mts`、`tests/worktree.test.mts`）を検証しています。`agy` を使った対話品質、Claude の実接続、Windows と Linux での動作、Claude API の課金先は未検証です。
 
 ## Docs: ADRの作成と検索
 

@@ -16,8 +16,8 @@ export async function run(options = {}) {
 	// レビューするコミットと変更ファイルを固定する。
 	const manifest = await prepare(options, workspace);
 	// レビューに使う AI CLI の設定と認証を確認する。
-	await agent.check();
-	// 認証や入力処理などの安全性を確認する。
+	await agent.check(["security"]);
+	// OWASP の視点から認証や入力処理などの安全性を確認する。
 	return review("security", manifest, workspace, agent);
 }
 

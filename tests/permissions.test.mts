@@ -18,16 +18,14 @@ test("公開タスクだけが実行権限を持つ", {
 	}
 	for (const name of ["docs", "mdw"])
 		checkLibrary(path.join(root, name, "_lib"));
-	for (const entry of fs.readdirSync(path.join(root, "mdw/prompts"), {
-		withFileTypes: true,
-	})) {
-		if (entry.isFile())
-			assert.equal(
-				fs.statSync(path.join(root, "mdw/prompts", entry.name)).mode & 0o111,
-				0,
-				entry.name,
-			);
+	function checkNonExecutable(directory) {
+		for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+			const file = path.join(directory, entry.name);
+			if (entry.isDirectory()) checkNonExecutable(file);
+			else assert.equal(fs.statSync(file).mode & 0o111, 0, file);
+		}
 	}
+	checkNonExecutable(path.join(root, "mdw/prompts"));
 	for (const file of [
 		"docs/new.mts",
 		"docs/search.mts",
@@ -42,6 +40,7 @@ test("公開タスクだけが実行権限を持つ", {
 		"mdw/review/prepare.mts",
 		"mdw/review/check.mts",
 		"mdw/review/security.mts",
+		"mdw/review/architecture.mts",
 		"mdw/review/quality.mts",
 		"mdw/review/judge.mts",
 		"mdw/review/post.mts",

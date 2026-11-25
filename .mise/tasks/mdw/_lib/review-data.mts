@@ -1,9 +1,52 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
 export const roles = {
 	security: "認証、認可、入力処理、情報漏えいなどのセキュリティ上の欠陥",
-	quality: "正しさ、回帰、例外処理、テスト不足などの品質上の欠陥",
+	architecture:
+		"docs/intent.md・ADRとの整合、責務分離、障害耐性などのアーキテクチャ・運用上の欠陥",
+	quality:
+		"正しさ、回帰、例外処理、テスト観点（testent）の妥当性などの品質上の欠陥",
 };
+
+const defaultPromptDir = fileURLToPath(
+	new URL("../prompts/review", import.meta.url),
+);
+
+function readReviewPromptFile(promptDir, filename) {
+	const file = path.join(promptDir, filename);
+	let content: string;
+	try {
+		content = fs.readFileSync(file, "utf8").trim();
+	} catch {
+		throw new Error(`レビュー用プロンプトを読み取れません: ${filename}`);
+	}
+	if (!content) throw new Error(`レビュー用プロンプトが空です: ${filename}`);
+	return content;
+}
+
+// プレフィックスキャッシュを活かすため、全ロール共通の静的ルール → ロール固有の静的観点 → 動的コンテキストの順に組み立てる。
+export function buildReviewPrompt(
+	role,
+	manifest,
+	{ promptDir = defaultPromptDir } = {},
+) {
+	if (!Object.hasOwn(roles, role))
+		throw new Error(`不明なレビューの観点です: ${role}`);
+	const base = readReviewPromptFile(promptDir, "base.md");
+	const roleGuide = readReviewPromptFile(promptDir, `${role}.md`);
+	const before = manifest.merge_base_commit;
+	const after = manifest.head_commit;
+	const dynamicContext = [
+		"## レビュー対象",
+		`対象コミット範囲: ${before} から ${after} まで`,
+		`変更ファイルの一覧（binary は Git がバイナリーと判定したファイル）: ${JSON.stringify(manifest.changed_files)}`,
+		`最初に実行する差分確認コマンド: git diff --no-ext-diff --no-textconv --no-renames ${before} ${after} --`,
+	].join("\n");
+	return `${base}\n\n${roleGuide}\n\n${dynamicContext}`;
+}
 const findingFields = [
 	"severity",
 	"file",

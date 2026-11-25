@@ -55,7 +55,7 @@ test("複数のリポジトリを並行して準備しても、対象と保存�
 			[`${index}.txt`],
 		);
 		assert.deepEqual(workspace.read("manifest.json"), manifest);
-		const reviews = ["security", "quality"].map((role) => ({
+		const reviews = ["security", "architecture", "quality"].map((role) => ({
 			reviewer_id: role,
 			target: manifest,
 			review: { findings: [], limitations: [], file_coverage: [] },
