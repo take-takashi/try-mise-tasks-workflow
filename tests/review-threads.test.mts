@@ -110,6 +110,8 @@ function fixture(t) {
 			"const args = process.argv.slice(2);",
 			"if (args[0] !== 'api' || args[1] !== '--hostname' || args[2] !== 'github.com') process.exit(12);",
 			"if (args[3] === 'repos/example/project/pulls/34') {",
+			"  if (state.failRest === '422') { console.log(JSON.stringify({ status: '422', message: 'Validation Failed', errors: [{ resource: 'PullRequestReview', field: 'line', code: 'invalid' }] })); process.exit(1); }",
+			"  if (state.failRest === 'auth') { console.error('not logged in'); process.exit(1); }",
 			`  console.log(JSON.stringify({ html_url: ${JSON.stringify(pr)}, state: state.prState, base: { sha: 'b'.repeat(40) }, head: { sha: state.headSha, ref: state.headRef } }));`,
 			"  process.exit(0);",
 			"}",
@@ -542,8 +544,37 @@ test("異常入力・対象外スレッド・GraphQL 障害・部分失敗を明
 	assert.equal(gqlErr.status, 1);
 	assert.match(gqlErr.stderr, /GraphQL API がエラーを返しました.*boom/);
 
+	// REST API の 422 errors 配列と、stdout が空の未認証失敗を要約して返す
+	f.writeState({ ...f.readState(), failGraphql: false, failRest: "422" });
+	const rest422 = f.run(
+		f.root,
+		"mise",
+		"run",
+		"mdw:review:threads",
+		"--pr",
+		pr,
+	);
+	assert.equal(rest422.status, 1);
+	assert.match(
+		rest422.stderr,
+		/HTTP 422 Validation Failed.*PullRequestReview line invalid/,
+	);
+
+	f.writeState({ ...f.readState(), failRest: "auth" });
+	const restAuth = f.run(
+		f.root,
+		"mise",
+		"run",
+		"mdw:review:threads",
+		"--pr",
+		pr,
+	);
+	assert.equal(restAuth.status, 1);
+	assert.match(restAuth.stderr, /gh の認証状態と通信環境を確認してください/);
+	assert.doesNotMatch(restAuth.stderr, /not logged in/);
+
 	// クローズ済み PR
-	f.writeState({ ...f.readState(), failGraphql: false, prState: "closed" });
+	f.writeState({ ...f.readState(), failRest: false, prState: "closed" });
 	const closed = f.run(f.root, "mise", "run", "mdw:review:threads", "--pr", pr);
 	assert.equal(closed.status, 1);
 	assert.match(closed.stderr, /オープンな Pull Request/);

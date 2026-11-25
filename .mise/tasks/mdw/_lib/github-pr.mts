@@ -34,8 +34,27 @@ function summarizeGraphqlErrors(errors) {
 		.join("; ");
 }
 
+function summarizeRestErrors(errors) {
+	return errors
+		.slice(0, 3)
+		.map((item) => {
+			if (typeof item === "string") return item.trim().slice(0, 160);
+			if (!item || typeof item !== "object") return "";
+			const parts = [item.resource, item.field, item.code, item.message]
+				.filter((value) => typeof value === "string" && value.trim())
+				.map((value) => value.trim());
+			return parts.join(" ").slice(0, 160);
+		})
+		.filter(Boolean)
+		.join("; ");
+}
+
 function summarizeRestFailure(stdoutText, code, signal) {
-	let parsed: { message?: unknown; status?: unknown } | null = null;
+	let parsed: {
+		message?: unknown;
+		status?: unknown;
+		errors?: unknown[];
+	} | null = null;
 	try {
 		parsed = JSON.parse(stdoutText);
 	} catch {}
@@ -48,8 +67,20 @@ function summarizeRestFailure(stdoutText, code, signal) {
 		typeof parsed?.message === "string"
 			? parsed.message.trim().slice(0, 160)
 			: "";
-	const detail = `${status}${message}`.trim();
-	return `GitHub API の呼び出しが終了コード ${code ?? signal} で失敗しました${detail ? `: ${detail}` : ""}。`;
+	const errorDetail =
+		Array.isArray(parsed?.errors) && parsed.errors.length > 0
+			? summarizeRestErrors(parsed.errors)
+			: "";
+	const detail = [
+		`${status}${message}`.trim(),
+		errorDetail ? `(${errorDetail})` : "",
+	]
+		.filter(Boolean)
+		.join(" ");
+	if (detail) {
+		return `GitHub API の呼び出しが終了コード ${code ?? signal} で失敗しました: ${detail}。`;
+	}
+	return `GitHub API の呼び出しが終了コード ${code ?? signal} で失敗しました。gh の認証状態と通信環境を確認してください。`;
 }
 
 export async function githubApi(endpoint, args = [], input = "") {
