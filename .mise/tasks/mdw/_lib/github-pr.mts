@@ -21,39 +21,92 @@ export function parsePullRequestUrl(url) {
 	};
 }
 
-export async function githubApi(endpoint, args = [], input = "") {
-	const { stdout } = await runCommand(
-		["gh", "api", "--hostname", "github.com", endpoint, ...args],
-		{ input, timeout: 30 },
-	);
+function summarizeGraphqlErrors(errors) {
+	return errors
+		.slice(0, 3)
+		.map((item) => {
+			const kind = typeof item?.type === "string" ? `[${item.type}] ` : "";
+			const message =
+				typeof item?.message === "string" ? item.message.trim() : "";
+			return `${kind}${message}`.slice(0, 160);
+		})
+		.filter(Boolean)
+		.join("; ");
+}
+
+function summarizeRestFailure(stdoutText, code, signal) {
+	let parsed: { message?: unknown; status?: unknown } | null = null;
 	try {
-		return JSON.parse(stdout.toString("utf8"));
+		parsed = JSON.parse(stdoutText);
+	} catch {}
+	const status =
+		parsed &&
+		(typeof parsed.status === "string" || typeof parsed.status === "number")
+			? `HTTP ${parsed.status} `
+			: "";
+	const message =
+		typeof parsed?.message === "string"
+			? parsed.message.trim().slice(0, 160)
+			: "";
+	const detail = `${status}${message}`.trim();
+	return `GitHub API の呼び出しが終了コード ${code ?? signal} で失敗しました${detail ? `: ${detail}` : ""}。`;
+}
+
+export async function githubApi(endpoint, args = [], input = "") {
+	const { stdout, code, signal } = await runCommand(
+		["gh", "api", "--hostname", "github.com", endpoint, ...args],
+		{ input, timeout: 30, allowNonZero: true },
+	);
+	const stdoutText = stdout.toString("utf8");
+	if (code !== 0) {
+		throw new Error(summarizeRestFailure(stdoutText, code, signal));
+	}
+	try {
+		return JSON.parse(stdoutText);
 	} catch {
 		throw new Error("GitHub API の応答を JSON として読み取れません。");
 	}
 }
 
 export async function githubGraphql(query, variables = {}) {
-	const result = await githubApi(
-		"graphql",
-		["--method", "POST", "--input", "-"],
-		JSON.stringify({ query, variables }),
+	const { stdout, code, signal } = await runCommand(
+		[
+			"gh",
+			"api",
+			"--hostname",
+			"github.com",
+			"graphql",
+			"--method",
+			"POST",
+			"--input",
+			"-",
+		],
+		{
+			input: JSON.stringify({ query, variables }),
+			timeout: 30,
+			allowNonZero: true,
+		},
 	);
+	const stdoutText = stdout.toString("utf8");
+	let result: {
+		errors?: Array<{ type?: unknown; message?: unknown }>;
+		data?: Record<string, unknown> | null;
+	} | null = null;
+	try {
+		result = JSON.parse(stdoutText);
+	} catch {
+		if (code !== 0)
+			throw new Error(summarizeRestFailure(stdoutText, code, signal));
+		throw new Error("GitHub GraphQL API の応答を JSON として読み取れません。");
+	}
 	if (Array.isArray(result?.errors) && result.errors.length > 0) {
-		const summary = result.errors
-			.slice(0, 3)
-			.map((item) => {
-				const kind = typeof item?.type === "string" ? `[${item.type}] ` : "";
-				const message =
-					typeof item?.message === "string" ? item.message.trim() : "";
-				return `${kind}${message}`.slice(0, 160);
-			})
-			.filter(Boolean)
-			.join("; ");
+		const summary = summarizeGraphqlErrors(result.errors);
 		throw new Error(
 			`GitHub GraphQL API がエラーを返しました（${result.errors.length} 件）${summary ? `: ${summary}` : ""}。`,
 		);
 	}
+	if (code !== 0)
+		throw new Error(summarizeRestFailure(stdoutText, code, signal));
 	if (!result || typeof result.data !== "object" || result.data === null) {
 		throw new Error("GitHub GraphQL API の応答データが不正です。");
 	}

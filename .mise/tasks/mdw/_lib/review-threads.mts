@@ -40,6 +40,24 @@ query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
 }
 `;
 
+const maxReplyBodyFileBytes = 65536;
+
+const latestThreadCommentQuery = `
+query($threadId: ID!) {
+  node(id: $threadId) {
+    ... on PullRequestReviewThread {
+      comments(last: 1) {
+        nodes {
+          id
+          body
+          url
+        }
+      }
+    }
+  }
+}
+`;
+
 const replyThreadMutation = `
 mutation($threadId: ID!, $body: String!) {
   addPullRequestReviewThreadReply(input: {
@@ -123,32 +141,72 @@ export async function fetchReviewThreads(
 	);
 }
 
+function readSafeReplyBodyFile(bodyFile, cwd) {
+	if (typeof bodyFile !== "string" || !bodyFile.trim())
+		throw new Error("--body-file には空でないファイルパスを指定してください。");
+	const base = fs.realpathSync(cwd);
+	const resolved = path.resolve(base, bodyFile);
+	let lstat: fs.Stats;
+	try {
+		lstat = fs.lstatSync(resolved);
+	} catch {
+		throw new Error(`返信本文ファイルを読み取れません: ${bodyFile}`);
+	}
+	if (lstat.isSymbolicLink() || !lstat.isFile())
+		throw new Error(
+			"--body-file には作業ディレクトリ配下の通常ファイルを指定してください。",
+		);
+	const realFile = fs.realpathSync(resolved);
+	const relative = path.relative(base, realFile);
+	if (
+		!relative ||
+		relative === ".." ||
+		relative.startsWith(`..${path.sep}`) ||
+		path.isAbsolute(relative)
+	)
+		throw new Error(
+			"--body-file に作業ディレクトリ外のファイルは指定できません。",
+		);
+	if (lstat.size > maxReplyBodyFileBytes)
+		throw new Error(
+			`--body-file のサイズが上限（${maxReplyBodyFileBytes} バイト）を超えています。`,
+		);
+	return fs.readFileSync(realFile, "utf8");
+}
+
 export function resolveReplyBody({
 	body,
 	bodyFile,
 	resolve = false,
 	cwd = process.env.MISE_ORIGINAL_CWD || process.cwd(),
 } = {}) {
-	const hasBody = typeof body === "string" && body.length > 0;
-	const hasBodyFile = typeof bodyFile === "string" && bodyFile.length > 0;
+	const hasBody = body !== undefined && body !== null;
+	const hasBodyFile = bodyFile !== undefined && bodyFile !== null;
 	if (hasBody && hasBodyFile)
 		throw new Error("--body と --body-file は同時に指定できません。");
 	if (!hasBody && !hasBodyFile) {
 		if (resolve) return null;
 		throw new Error("--body または --body-file で返信本文を指定してください。");
 	}
-	let content = body;
-	if (hasBodyFile) {
-		const resolved = path.resolve(cwd, bodyFile);
-		try {
-			content = fs.readFileSync(resolved, "utf8");
-		} catch {
-			throw new Error(`返信本文ファイルを読み取れません: ${bodyFile}`);
-		}
-	}
-	if (!content.trim())
+	const content = hasBodyFile ? readSafeReplyBodyFile(bodyFile, cwd) : body;
+	if (typeof content !== "string" || !content.trim())
 		throw new Error("返信本文には空でない文字列を指定してください。");
 	return content;
+}
+
+async function resolveLatestComment(thread) {
+	if (!thread.comments_truncated) return thread.comments.at(-1) ?? null;
+	const data = await githubGraphql(latestThreadCommentQuery, {
+		threadId: thread.id,
+	});
+	const latest = data?.node?.comments?.nodes?.[0];
+	if (!latest || typeof latest.id !== "string")
+		throw new Error("対象スレッドの最新コメントを取得できませんでした。");
+	return {
+		id: latest.id,
+		body: latest.body ?? "",
+		url: latest.url ?? null,
+	};
 }
 
 export async function replyToReviewThread(
@@ -173,7 +231,8 @@ export async function replyToReviewThread(
 			"指定したスレッド ID が対象の Pull Request に見つかりません。",
 		);
 
-	const lastComment = thread.comments.at(-1) ?? null;
+	const lastComment =
+		typeof body === "string" ? await resolveLatestComment(thread) : null;
 	const duplicateReply = typeof body === "string" && lastComment?.body === body;
 
 	if (dryRun) {

@@ -30,7 +30,7 @@ export function parseDiffLineRanges(diffText) {
 			if (line === "+++ /dev/null") {
 				currentFile = null;
 			} else if (line.startsWith("+++ b/")) {
-				currentFile = line.slice("+++ b/".length);
+				currentFile = line.slice("+++ b/".length).replace(/\t$/, "");
 				if (!ranges.has(currentFile)) ranges.set(currentFile, []);
 			} else {
 				currentFile = null;

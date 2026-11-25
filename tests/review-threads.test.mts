@@ -115,7 +115,13 @@ function fixture(t) {
 			"}",
 			"if (args[3] !== 'graphql') process.exit(13);",
 			"const payload = JSON.parse(fs.readFileSync(0, 'utf8'));",
-			"if (state.failGraphql) { console.log(JSON.stringify({ errors: [{ message: 'boom' }] })); process.exit(0); }",
+			"if (state.failGraphql) { console.log(JSON.stringify({ errors: [{ type: 'FORBIDDEN', message: 'boom' }] })); process.exit(1); }",
+			"if (payload.query.includes('comments(last: 1)')) {",
+			"  const { threadId } = payload.variables;",
+			"  const latest = state.truncatedLatest?.[threadId] ?? null;",
+			"  console.log(JSON.stringify({ data: { node: { comments: { nodes: latest ? [latest] : [] } } } }));",
+			"  process.exit(0);",
+			"}",
 			"if (payload.query.includes('reviewThreads')) {",
 			"  const idx = payload.variables.cursor === 'cursor-1' ? 1 : 0;",
 			"  const page = state.pages[idx];",
@@ -133,7 +139,7 @@ function fixture(t) {
 			"  process.exit(0);",
 			"}",
 			"if (payload.query.includes('resolveReviewThread')) {",
-			"  if (state.failResolve) { console.log(JSON.stringify({ errors: [{ message: 'resolve failed' }] })); process.exit(0); }",
+			"  if (state.failResolve) { console.log(JSON.stringify({ errors: [{ type: 'UNPROCESSABLE', message: 'resolve failed' }] })); process.exit(1); }",
 			"  const { threadId } = payload.variables;",
 			"  state.resolvedIds.push(threadId);",
 			"  for (const page of state.pages) for (const node of page.nodes) if (node.id === threadId) node.isResolved = true;",
@@ -255,7 +261,36 @@ test("mise から未解決スレッド取得・インライン返信・resolve �
 	assert.equal(resolvedJson.already_resolved, false);
 	assert.deepEqual(f.readState().resolvedIds, ["PRRT_open_1"]);
 
-	// すでに resolve 済みスレッドへの --resolve は resolve mutation を再実行しない
+	// すでに resolve 済み（かつ comments_truncated: true）スレッドは comments(last: 1) で最新コメントを確認する
+	f.writeState({
+		...f.readState(),
+		truncatedLatest: {
+			PRRT_resolved_1: {
+				id: "PRRC_latest_105",
+				body: "最新の重複本文",
+				url: `${pr}#discussion_r105`,
+			},
+		},
+	});
+	const truncatedDup = f.run(
+		f.root,
+		"mise",
+		"run",
+		"mdw:review:reply",
+		"--pr",
+		pr,
+		"--thread",
+		"PRRT_resolved_1",
+		"--body",
+		"最新の重複本文",
+		"--resolve",
+	);
+	assert.equal(truncatedDup.status, 0, truncatedDup.stderr);
+	const truncatedDupJson = JSON.parse(truncatedDup.stdout);
+	assert.equal(truncatedDupJson.already_replied, true);
+	assert.equal(truncatedDupJson.already_resolved, true);
+	assert.equal(f.readState().replies.length, 2);
+
 	const alreadyRes = f.run(
 		f.root,
 		"mise",
@@ -271,6 +306,7 @@ test("mise から未解決スレッド取得・インライン返信・resolve �
 	);
 	assert.equal(alreadyRes.status, 0, alreadyRes.stderr);
 	const alreadyJson = JSON.parse(alreadyRes.stdout);
+	assert.equal(alreadyJson.already_replied, false);
 	assert.equal(alreadyJson.resolved, true);
 	assert.equal(alreadyJson.already_resolved, true);
 	assert.deepEqual(f.readState().resolvedIds, ["PRRT_open_1"]);
@@ -352,6 +388,95 @@ test("異常入力・対象外スレッド・GraphQL 障害・部分失敗を明
 	);
 	assert.equal(blank.status, 1);
 	assert.match(blank.stderr, /空でない文字列/);
+
+	// 空文字列の --body "" --resolve や --body "" --body-file も拒否する
+	const emptyWithResolve = f.run(
+		f.root,
+		"mise",
+		"run",
+		"mdw:review:reply",
+		"--pr",
+		pr,
+		"--thread",
+		"PRRT_open_1",
+		"--body",
+		"",
+		"--resolve",
+	);
+	assert.equal(emptyWithResolve.status, 1);
+	assert.match(emptyWithResolve.stderr, /空でない文字列/);
+	assert.deepEqual(f.readState().resolvedIds, []);
+
+	const emptyBoth = f.run(
+		f.root,
+		"mise",
+		"run",
+		"mdw:review:reply",
+		"--pr",
+		pr,
+		"--thread",
+		"PRRT_open_1",
+		"--body",
+		"",
+		"--body-file",
+		"reply.md",
+	);
+	assert.equal(emptyBoth.status, 1);
+	assert.match(emptyBoth.stderr, /同時に指定できません/);
+
+	// --body-file は作業ディレクトリ外・シンボリックリンク・サイズ上限超過を拒否する
+	const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "mdw-outside-"));
+	t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
+	const secretFile = path.join(outsideDir, "secret.txt");
+	fs.writeFileSync(secretFile, "top-secret");
+	const outsidePath = f.run(
+		f.root,
+		"mise",
+		"run",
+		"mdw:review:reply",
+		"--pr",
+		pr,
+		"--thread",
+		"PRRT_open_1",
+		"--body-file",
+		path.relative(f.root, secretFile),
+	);
+	assert.equal(outsidePath.status, 1);
+	assert.match(outsidePath.stderr, /作業ディレクトリ外のファイル/);
+
+	const symlinkFile = path.join(f.root, "link.txt");
+	fs.symlinkSync(secretFile, symlinkFile);
+	const symlinkRes = f.run(
+		f.root,
+		"mise",
+		"run",
+		"mdw:review:reply",
+		"--pr",
+		pr,
+		"--thread",
+		"PRRT_open_1",
+		"--body-file",
+		"link.txt",
+	);
+	assert.equal(symlinkRes.status, 1);
+	assert.match(symlinkRes.stderr, /通常ファイル/);
+
+	fs.writeFileSync(path.join(f.root, "huge.txt"), "x".repeat(70000));
+	const hugeRes = f.run(
+		f.root,
+		"mise",
+		"run",
+		"mdw:review:reply",
+		"--pr",
+		pr,
+		"--thread",
+		"PRRT_open_1",
+		"--body-file",
+		"huge.txt",
+	);
+	assert.equal(hugeRes.status, 1);
+	assert.match(hugeRes.stderr, /上限/);
+	assert.equal(f.readState().replies.length, 0);
 
 	// 返信成功後に resolve のみ失敗した部分失敗
 	f.writeState({ ...f.readState(), failResolve: true });

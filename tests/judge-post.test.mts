@@ -151,6 +151,12 @@ test("unified diff のハンク行範囲を本文中の擬似ヘッダと混同�
 		"@@ -10 +10 @@",
 		"-old",
 		"+new",
+		"diff --git a/dir with space/file name.mts b/dir with space/file name.mts",
+		"--- a/dir with space/file name.mts",
+		"+++ b/dir with space/file name.mts\t",
+		"@@ -5,1 +5,2 @@",
+		" keep",
+		"+added",
 		"",
 	].join("\n");
 	const ranges = parseDiffLineRanges(diff);
@@ -158,6 +164,9 @@ test("unified diff のハンク行範囲を本文中の擬似ヘッダと混同�
 	assert.equal(ranges.has("fake.mts"), false);
 	assert.deepEqual(ranges.get("src/app.mts"), [{ start: 1, end: 4 }]);
 	assert.deepEqual(ranges.get("other.mts"), [{ start: 10, end: 10 }]);
+	assert.deepEqual(ranges.get("dir with space/file name.mts"), [
+		{ start: 5, end: 6 },
+	]);
 });
 
 test("mise から指摘を評価し、採用分をインラインコメントと本文フォールバックで PR に投稿する", (t) => {
