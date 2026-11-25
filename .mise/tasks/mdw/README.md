@@ -10,17 +10,18 @@
 
 ## 依頼からタスクを選ぶ
 
-| ユーザーの依頼の例                                         | 使うタスクと次に行うこと                                                                                                  |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| 「今の共通化する方式、intent に入れておいて」              | `mise run mdw:intent` の出力を読み、現在の会話から内容を特定して intent を更新する。                                      |
-| 「この PJ の思想を掘り下げたい」「インタビューして」       | 現在のチャットでは `mise run mdw:interview --prompt` の出力に従って、壁打ちを通じて対話する。                             |
-| 「壁打ちして Issue を作って」「設計を詰めて Issue 化して」 | 現在のチャットでは `mise run mdw:issue:new --prompt` の出力に従って壁打ちし、合意後に `gh issue create` で起票する。      |
-| 「レビューして」                                           | 対象のコミット範囲を確認して `mise run mdw:review --base <ref> --head <ref>` を実行し、指摘と検証できなかった範囲を読む。 |
-| 「レビューの指摘を評価して」                               | レビューを実行した worktree で `mise run mdw:review:judge` を実行し、判定結果を読む。                                     |
-| 「レビュー結果を PR に投稿して」                           | `mise run mdw:review:post --dry-run` で対象を確認し、依頼された PR に `--pr <URL>` を指定して投稿する。                   |
-| 「CLI の設定と認証を確認して」                             | `mise run mdw:check` を使う。これはレビュー用の設定と認証の確認で、モデルの利用可否までは保証しない。                     |
-| 「作業用 worktree を作って」                               | 作業に合う Conventional Branch 名を決め、`mise run mdw:worktree:new --branch <branch>` を実行する。                       |
-| 「マージ済みの worktree を整理して」                       | 対象の外から `mise run mdw:worktree:cleanup <path>` を実行する。                                                          |
+| ユーザーの依頼の例                                         | 使うタスクと次に行うこと                                                                                                                                              |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 「今の共通化する方式、intent に入れておいて」              | `mise run mdw:intent` の出力を読み、現在の会話から内容を特定して intent を更新する。                                                                                  |
+| 「この PJ の思想を掘り下げたい」「インタビューして」       | 現在のチャットでは `mise run mdw:interview --prompt` の出力に従って、壁打ちを通じて対話する。                                                                         |
+| 「壁打ちして Issue を作って」「設計を詰めて Issue 化して」 | 現在のチャットでは `mise run mdw:issue:new --prompt` の出力に従って壁打ちし、合意後に `gh issue create` で起票する。                                                  |
+| 「レビューして」                                           | 対象のコミット範囲を確認して `mise run mdw:review --base <ref> --head <ref>` を実行し、指摘と検証できなかった範囲を読む。                                             |
+| 「レビューの指摘を評価して」                               | レビューを実行した worktree で `mise run mdw:review:judge` を実行し、判定結果を読む。                                                                                 |
+| 「レビュー結果を PR に投稿して」                           | `mise run mdw:review:post --dry-run` で対象を確認し、依頼された PR に `--pr <URL>` を指定してインラインコメント付きで投稿する。                                       |
+| 「PR の未解決レビューコメントを確認・返信して」            | `mise run mdw:review:threads --pr <URL>` で未解決スレッドを取得し、`mise run mdw:review:reply --pr <URL> --thread <ID> --body ... [--resolve]` で返信・resolve する。 |
+| 「CLI の設定と認証を確認して」                             | `mise run mdw:check` を使う。これはレビュー用の設定と認証の確認で、モデルの利用可否までは保証しない。                                                                 |
+| 「作業用 worktree を作って」                               | 作業に合う Conventional Branch 名を決め、`mise run mdw:worktree:new --branch <branch>` を実行する。                                                                   |
+| 「マージ済みの worktree を整理して」                       | 対象の外から `mise run mdw:worktree:cleanup <path>` を実行する。                                                                                                      |
 
 利用できるタスクは `mise tasks ls --json` で確認できます。引数が不明な場合は、対象タスクの `--help` を読んでください。タスクはコピー元の絶対パスではなく、対象プロジェクトの mise から実行してください。
 

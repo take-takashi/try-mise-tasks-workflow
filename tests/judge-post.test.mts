@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { parseDiffLineRanges } from "../.mise/tasks/mdw/_lib/post-review.mts";
 
 const project = fileURLToPath(new URL("..", import.meta.url));
 const pr = "https://github.com/example/project/pull/12";
@@ -51,12 +52,21 @@ function fixture(t) {
 	ok("git", "config", "commit.gpgsign", "false");
 	ok("git", "config", "user.name", "Test User");
 	ok("git", "config", "user.email", "test@example.invalid");
-	fs.writeFileSync(path.join(root, "example.txt"), "base\n");
+	fs.writeFileSync(
+		path.join(root, "example.txt"),
+		`${Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join("\n")}\n`,
+	);
 	ok("git", "add", "example.txt");
 	ok("git", "commit", "-m", "base");
 	const base = ok("git", "rev-parse", "HEAD");
 	ok("git", "switch", "-c", "feat/example");
-	fs.writeFileSync(path.join(root, "example.txt"), "changed\n");
+	fs.writeFileSync(
+		path.join(root, "example.txt"),
+		`${[
+			"changed line 1",
+			...Array.from({ length: 19 }, (_, i) => `line ${i + 2}`),
+		].join("\n")}\n`,
+	);
 	ok("git", "commit", "-am", "change");
 	const head = ok("git", "rev-parse", "HEAD");
 
@@ -87,15 +97,20 @@ function fixture(t) {
 			"const args = process.argv.slice(2);",
 			"if (args[0] !== 'api' || args[1] !== '--hostname' || args[2] !== 'github.com') process.exit(12);",
 			"if (args[3] === 'repos/example/project/pulls/12') {",
-			`  console.log(JSON.stringify({ html_url: ${JSON.stringify(pr)}, state: 'open', base: { sha: state.base }, head: { sha: state.head } }));`,
+			`  console.log(JSON.stringify({ html_url: ${JSON.stringify(pr)}, state: 'open', base: { sha: state.base }, head: { sha: state.head, ref: 'feat/example' } }));`,
 			"} else if (args[3] === 'repos/example/project/pulls/12/reviews') {",
 			"  if (args.includes('POST')) {",
 			"    const input = JSON.parse(fs.readFileSync(0, 'utf8'));",
 			"    if (input.event !== 'COMMENT' || input.commit_id !== state.head) process.exit(13);",
-			`    const review = { ...input, state: 'COMMENTED', html_url: ${JSON.stringify(pr + "#pullrequestreview-1")} };`,
+			"    const id = state.reviews.length + 1;",
+			`    const review = { id, ...input, state: 'COMMENTED', html_url: ${JSON.stringify(`${pr}#pullrequestreview-`)} + id };`,
 			"    state.reviews.push(review); fs.writeFileSync(file, JSON.stringify(state)); console.log(JSON.stringify(review));",
 			"  } else if (args.includes('--paginate') && args.includes('--slurp')) console.log(JSON.stringify([state.reviews]));",
 			"  else process.exit(14);",
+			"} else if (/^repos\\/example\\/project\\/pulls\\/12\\/reviews\\/\\d+\\/comments$/.test(args[3])) {",
+			"  const id = Number(args[3].split('/')[6]);",
+			"  const review = state.reviews.find((item) => item.id === id);",
+			"  console.log(JSON.stringify([review?.comments ?? []]));",
 			"} else process.exit(15);",
 		].join("\n"),
 		{ mode: 0o755 },
@@ -113,19 +128,60 @@ function fixture(t) {
 	};
 }
 
-test("mise から指摘を評価し、採用分だけを指定の PR のコミットに投稿する", (t) => {
+test("unified diff のハンク行範囲を本文中の擬似ヘッダと混同せずに抽出する", () => {
+	const diff = [
+		"diff --git a/deleted.txt b/deleted.txt",
+		"deleted file mode 100644",
+		"--- a/deleted.txt",
+		"+++ /dev/null",
+		"@@ -1,2 +0,0 @@",
+		"-old 1",
+		"-old 2",
+		"diff --git a/src/app.mts b/src/app.mts",
+		"--- a/src/app.mts",
+		"+++ b/src/app.mts",
+		"@@ -1,2 +1,4 @@",
+		" line 1",
+		"+++ b/fake.mts",
+		"+@@ -99,1 +99,1 @@",
+		" line 2",
+		"diff --git a/other.mts b/other.mts",
+		"--- a/other.mts",
+		"+++ b/other.mts",
+		"@@ -10 +10 @@",
+		"-old",
+		"+new",
+		"",
+	].join("\n");
+	const ranges = parseDiffLineRanges(diff);
+	assert.equal(ranges.has("deleted.txt"), false);
+	assert.equal(ranges.has("fake.mts"), false);
+	assert.deepEqual(ranges.get("src/app.mts"), [{ start: 1, end: 4 }]);
+	assert.deepEqual(ranges.get("other.mts"), [{ start: 10, end: 10 }]);
+});
+
+test("mise から指摘を評価し、採用分をインラインコメントと本文フォールバックで PR に投稿する", (t) => {
 	const f = fixture(t);
-	const finding = {
+	const inlineFinding = {
 		severity: "medium",
 		file: "example.txt",
 		line: 1,
-		title: "採用する指摘 @example",
+		title: "採用するインライン指摘 @example",
 		evidence: "ローカルの根拠",
-		recommendation: "修正案",
+		recommendation: "1行目を修正",
 	};
-	f.summary.reviews[0].review.findings.push(finding);
+	const outsideFinding = {
+		severity: "low",
+		file: "example.txt",
+		line: 18,
+		title: "diff 範囲外の採用指摘",
+		evidence: "18行目の根拠",
+		recommendation: "18行目を修正",
+	};
+	f.summary.reviews[0].review.findings.push(inlineFinding);
+	f.summary.reviews[1].review.findings.push(outsideFinding);
 	f.summary.reviews[2].review.findings.push({
-		...finding,
+		...inlineFinding,
 		title: "重複した指摘",
 	});
 	f.writeSummary();
@@ -136,6 +192,12 @@ test("mise から指摘を評価し、採用分だけを指定の PR のコミ�
 			verdict: "duplicate",
 			reason: "同じ原因",
 			duplicate_of: "security:1",
+		},
+		{
+			id: "architecture:1",
+			verdict: "accepted",
+			reason: "範囲外だが影響あり",
+			duplicate_of: null,
 		},
 		{
 			id: "security:1",
@@ -164,11 +226,17 @@ test("mise から指摘を評価し、採用分だけを指定の PR のコミ�
 		fs.readFileSync(path.join(f.output, "judged.json"), "utf8"),
 	);
 	assert.deepEqual(saved.judge, { provider: "codex", model: null });
-	assert.deepEqual(saved.decisions, [...decisions].reverse());
-	const body = f.ok(...f.task("post", "--dry-run"));
-	assert.match(body, /採用 1 件 \/ 評価 2 件/);
-	assert.match(body, /~~~~\n\[medium\]/);
-	assert.doesNotMatch(body, /重複した指摘|ローカルの根拠/);
+	assert.deepEqual(saved.decisions, [decisions[2], decisions[1], decisions[0]]);
+	const preview = f.ok(...f.task("post", "--dry-run"));
+	assert.match(
+		preview,
+		/採用 2 件 \/ 評価 3 件（インライン 1 件、本文記載 1 件）/,
+	);
+	assert.match(preview, /### インラインコメント予定/);
+	assert.match(preview, /`example\.txt:1` \(RIGHT\)/);
+	assert.match(preview, /~~~~\n\[medium\] 採用するインライン指摘 @example/);
+	assert.match(preview, /\[low\] diff 範囲外の採用指摘/);
+	assert.doesNotMatch(preview, /重複した指摘|ローカルの根拠/);
 	assert.equal(f.readState().reviews.length, 0);
 
 	const original = f.readState();
@@ -180,10 +248,19 @@ test("mise から指摘を評価し、採用分だけを指定の PR のコミ�
 	f.writeState(original);
 	const posted = JSON.parse(f.ok(...f.task("post", "--pr", pr)));
 	assert.deepEqual(posted, {
-		url: pr + "#pullrequestreview-1",
+		url: `${pr}#pullrequestreview-1`,
 		alreadyPosted: false,
+		inlineCount: 1,
+		fallbackCount: 1,
 	});
-	assert.equal(f.readState().reviews[0].body, body);
+	const postedReview = f.readState().reviews[0];
+	assert.equal(postedReview.comments.length, 1);
+	assert.equal(postedReview.comments[0].path, "example.txt");
+	assert.equal(postedReview.comments[0].line, 1);
+	assert.equal(postedReview.comments[0].side, "RIGHT");
+	assert.match(postedReview.comments[0].body, /~~~~\n\[medium\]/);
+	assert.match(postedReview.body, /diff 範囲外の採用指摘/);
+
 	const retried = JSON.parse(f.ok(...f.task("post", "--pr", pr)));
 	assert.equal(retried.alreadyPosted, true);
 	assert.equal(f.readState().reviews.length, 1);
