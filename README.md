@@ -92,7 +92,7 @@ mise run mdw:issue:new --prompt "agy プロバイダーを追加したい"
 
 AI の設定は `MDW_ISSUE_PROVIDER`、`MDW_ISSUE_MODEL`、`MDW_ISSUE_EFFORT`、`MDW_ISSUE_BILLING` を使い、未指定の項目には対応する `MDW_DEFAULT_*` を使います。会話の進め方は [Issue 作成プロンプト](.mise/tasks/mdw/prompts/issue.md) で調整できます。合意前に外部へ起票しないよう指示しており、実際の起票には認証済みの `gh` CLI が必要です。代替 CLI を使ってプロンプトの受け渡しと起動を検証しています。実際の AI との対話品質や Issue 起票動作は試用時の確認項目です。
 
-## 指摘の評価と PR への投稿
+## 指摘の評価と PR への投稿・スレッド操作
 
 レビューを実行した worktree で、集約済みの指摘を Judge に渡します。Judge は対象の差分と照らし合わせて各指摘を採用、棄却、根拠不足、重複のいずれかに分類し、判定の根拠を `.reviews/judged.json` に保存します。モデル設定は `MDW_REVIEW_JUDGE_PROVIDER`、`MDW_REVIEW_JUDGE_MODEL`、`MDW_REVIEW_JUDGE_EFFORT`、`MDW_REVIEW_JUDGE_BILLING` で上書きできます。指摘がなければ AI CLI は起動しません。
 
@@ -100,9 +100,13 @@ AI の設定は `MDW_ISSUE_PROVIDER`、`MDW_ISSUE_MODEL`、`MDW_ISSUE_EFFORT`、
 mise run mdw:review:judge
 mise run mdw:review:post --dry-run
 mise run mdw:review:post --pr https://github.com/OWNER/REPO/pull/123
+mise run mdw:review:threads --pr https://github.com/OWNER/REPO/pull/123
+mise run mdw:review:reply --pr https://github.com/OWNER/REPO/pull/123 --thread <THREAD_ID> --body "修正しました" --resolve
 ```
 
-投稿タスクには、対象リポジトリでレビューを投稿できる認証済みの `gh` が必要です。PR のベースとヘッドが評価時のコミットに一致することを確認し、採用した指摘だけを対象コミットに紐づくレビューコメントとして投稿します。同じ本文を同じコミットに投稿済みの場合は、そのレビューの URL を返します。ベースかヘッドが変わった場合は、PR の現在のコミットを指定してレビューと評価をやり直してください。
+投稿・スレッド操作タスクには、対象リポジトリで PR を操作できる認証済みの `gh` が必要です。`mdw:review:post` は PR のベースとヘッドが評価時のコミットに一致することを確認し、採用した指摘のうち対象差分のハンク内に含まれるものは該当行へのインラインコメントとして、diff 範囲外のものはレビュー本文へフォールバックして投稿します。同じ本文・同じインラインコメントを同じコミットに投稿済みの場合は、そのレビューの URL を返します。ベースかヘッドが変わった場合は、PR の現在のコミットを指定してレビューと評価をやり直してください。
+
+`mdw:review:threads` は指定したオープンな PR の未解決レビュースレッド（`--all` で解決済みも含む）を GraphQL ページネーションで JSON 出力します。`mdw:review:reply` は指定したスレッド ID が対象 PR に属することを確認したうえで `--body` または `--body-file`（作業ディレクトリ配下の 64 KiB 以下の通常ファイルのみ許可し、シンボリックリンクや外部パスは拒否）の内容をインライン返信し、`--resolve` 指定時のみ未解決スレッドを resolve します（末尾コメントが同一内容なら重複返信を抑止し、`--resolve` 単独での再実行や `--dry-run` 検証にも対応します）。
 
 ## プロバイダーとモデルの設定
 

@@ -8,6 +8,7 @@ export function runCommand(
 		input = "",
 		timeout = 600,
 		cwd = path.resolve(process.env.MISE_ORIGINAL_CWD || process.cwd()),
+		allowNonZero = false,
 	} = {},
 ) {
 	return new Promise((resolve, reject) => {
@@ -48,7 +49,7 @@ export function runCommand(
 				reject(new Error(command[0] + " の実行がタイムアウトしました。"));
 				return;
 			}
-			if (code !== 0) {
+			if (code !== 0 && !allowNonZero) {
 				reject(
 					new Error(
 						command[0] +
@@ -59,7 +60,12 @@ export function runCommand(
 				);
 				return;
 			}
-			resolve({ stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) });
+			resolve({
+				stdout: Buffer.concat(stdout),
+				stderr: Buffer.concat(stderr),
+				code,
+				signal,
+			});
 		});
 		child.stdin.end(input);
 	});

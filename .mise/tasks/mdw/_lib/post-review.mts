@@ -1,107 +1,254 @@
+import { isDeepStrictEqual } from "node:util";
 import { runCommand } from "./command.mts";
+import { asPlainText, githubApi, verifyOpenPullRequest } from "./github-pr.mts";
 
-const pullRequestPattern =
-	/^https:\/\/github\.com\/([a-z0-9][a-z0-9-]*)\/([a-z0-9_.-]+)\/pull\/([1-9][0-9]*)$/i;
+const hunkHeaderPattern = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
-async function github(endpoint, args = [], input = "") {
+export function parseDiffLineRanges(diffText) {
+	const ranges = new Map();
+	let currentFile = null;
+	let remainingOld = 0;
+	let remainingNew = 0;
+	for (const rawLine of String(diffText).split("\n")) {
+		const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+		if (remainingOld > 0 || remainingNew > 0) {
+			if (line.startsWith(" ")) {
+				remainingOld = Math.max(0, remainingOld - 1);
+				remainingNew = Math.max(0, remainingNew - 1);
+			} else if (line.startsWith("-")) {
+				remainingOld = Math.max(0, remainingOld - 1);
+			} else if (line.startsWith("+")) {
+				remainingNew = Math.max(0, remainingNew - 1);
+			}
+			continue;
+		}
+		if (line.startsWith("diff --git ")) {
+			currentFile = null;
+			continue;
+		}
+		if (line.startsWith("+++ ")) {
+			if (line === "+++ /dev/null") {
+				currentFile = null;
+			} else if (line.startsWith("+++ b/")) {
+				currentFile = line.slice("+++ b/".length).replace(/\t$/, "");
+				if (!ranges.has(currentFile)) ranges.set(currentFile, []);
+			} else {
+				currentFile = null;
+			}
+			continue;
+		}
+		if (!currentFile || !line.startsWith("@@ ")) continue;
+		const match = hunkHeaderPattern.exec(line);
+		if (!match) continue;
+		const oldCount = match[2] === undefined ? 1 : Number(match[2]);
+		const newStart = Number(match[3]);
+		const newCount = match[4] === undefined ? 1 : Number(match[4]);
+		remainingOld = oldCount;
+		remainingNew = newCount;
+		if (newCount > 0) {
+			ranges.get(currentFile).push({
+				start: newStart,
+				end: newStart + newCount - 1,
+			});
+		}
+	}
+	return ranges;
+}
+
+export async function collectDiffLineRanges(target, { cwd }) {
 	const { stdout } = await runCommand(
-		["gh", "api", "--hostname", "github.com", endpoint, ...args],
-		{ input, timeout: 30 },
+		[
+			"git",
+			"-c",
+			"core.quotepath=false",
+			"-c",
+			"diff.noprefix=false",
+			"-c",
+			"diff.mnemonicPrefix=false",
+			"diff",
+			"-U3",
+			"-M",
+			"--diff-algorithm=myers",
+			"--src-prefix=a/",
+			"--dst-prefix=b/",
+			"--no-ext-diff",
+			"--no-textconv",
+			"--no-color",
+			target.merge_base_commit,
+			target.head_commit,
+			"--",
+		],
+		{ cwd, timeout: 30 },
 	);
-	return JSON.parse(stdout.toString("utf8"));
+	return parseDiffLineRanges(stdout.toString("utf8"));
+}
+
+function isLineInDiff(diffRanges, file, line) {
+	if (!diffRanges || !Number.isInteger(line) || line < 1) return false;
+	const entries = diffRanges.get(file);
+	if (!entries) return false;
+	return entries.some((range) => line >= range.start && line <= range.end);
 }
 
 export async function verifyPullRequest(url, target) {
-	const match = typeof url === "string" && pullRequestPattern.exec(url);
-	if (!match || match[2] === "." || match[2] === "..")
-		throw new Error(
-			"--pr に GitHub の Pull Request の URL を指定してください。",
-		);
-
-	const endpoint = `repos/${match[1]}/${match[2]}/pulls/${match[3]}`;
-	const pr = await github(endpoint);
-	if (pr?.html_url?.toLowerCase() !== url.toLowerCase() || pr.state !== "open")
-		throw new Error(
-			"指定した URL のオープンな Pull Request を確認できません。",
-		);
-	if (
-		pr.head?.sha !== target.head_commit ||
-		pr.base?.sha !== target.base_commit
-	)
-		throw new Error(
-			"Pull Request のベースまたはヘッドが評価時と異なります。レビューを実行し直してください。",
-		);
-
-	return { endpoint: `${endpoint}/reviews`, head: target.head_commit };
+	const verified = await verifyOpenPullRequest(url, {
+		baseCommit: target.base_commit,
+		headCommit: target.head_commit,
+	});
+	return {
+		endpoint: `${verified.endpoint}/reviews`,
+		head: target.head_commit,
+	};
 }
 
-// AI の文章はコードブロックに入れ、メンションや Markdown として解釈されないようにする。
-function asPlainText(value) {
-	const longest = Math.max(
-		2,
-		...Array.from(value.matchAll(/~+/g), ([run]) => run.length),
-	);
-	const fence = "~".repeat(longest + 1);
-	return `${fence}\n${value}\n${fence}`;
-}
+export function renderReview(
+	{ target, candidates, decisions, reviewLimitations, judgeLimitations },
+	{ diffRanges = null } = {},
+) {
+	const comments = [];
+	const fallback = [];
+	let acceptedCount = 0;
 
-export function renderReview({
-	target,
-	candidates,
-	decisions,
-	reviewLimitations,
-	judgeLimitations,
-}) {
+	for (const [index, decision] of decisions.entries()) {
+		if (decision.verdict !== "accepted") continue;
+		acceptedCount++;
+		const { finding } = candidates[index];
+		if (isLineInDiff(diffRanges, finding.file, finding.line)) {
+			comments.push({
+				path: finding.file,
+				line: finding.line,
+				side: "RIGHT",
+				body: asPlainText(
+					[
+						`[${finding.severity}] ${finding.title}`,
+						`判定の根拠: ${decision.reason}`,
+						`修正案: ${finding.recommendation}`,
+					].join("\n"),
+				),
+			});
+		} else {
+			fallback.push(
+				asPlainText(
+					[
+						`[${finding.severity}] ${finding.title}`,
+						`${finding.file}:${finding.line}`,
+						`判定の根拠: ${decision.reason}`,
+						`修正案: ${finding.recommendation}`,
+					].join("\n"),
+				),
+			);
+		}
+	}
+
+	const summaryLine =
+		acceptedCount > 0 && comments.length > 0
+			? `採用 ${acceptedCount} 件 / 評価 ${decisions.length} 件（インライン ${comments.length} 件、本文記載 ${fallback.length} 件）`
+			: `採用 ${acceptedCount} 件 / 評価 ${decisions.length} 件`;
+
 	const lines = [
 		"## MDW レビュー",
 		"",
 		`対象コミット \`${target.head_commit}\``,
 		"",
-	];
-	const accepted = [];
-	for (const [index, decision] of decisions.entries()) {
-		if (decision.verdict !== "accepted") continue;
-		const { finding } = candidates[index];
-		accepted.push(
-			asPlainText(
-				[
-					`[${finding.severity}] ${finding.title}`,
-					`${finding.file}:${finding.line}`,
-					`判定の根拠: ${decision.reason}`,
-				].join("\n"),
-			),
-		);
-	}
-	lines.push(
-		`採用 ${accepted.length} 件 / 評価 ${decisions.length} 件`,
+		summaryLine,
 		"",
-		...accepted.flatMap((item) => [item, ""]),
-	);
+		...fallback.flatMap((item) => [item, ""]),
+	];
 	if (reviewLimitations || judgeLimitations)
 		lines.push(
 			`確認範囲の制限が報告されています（レビュー ${reviewLimitations} 件、Judge ${judgeLimitations} 件）。`,
 		);
-	return lines.join("\n").trimEnd();
+	return {
+		body: lines.join("\n").trimEnd(),
+		comments,
+		inlineCount: comments.length,
+		fallbackCount: fallback.length,
+	};
 }
 
-export async function postReview({ endpoint, head }, body) {
-	const pages = await github(endpoint, ["--paginate", "--slurp"]);
-	const existing = pages
+export function formatDryRunReview({ body, comments }) {
+	if (!comments.length) return body;
+	const parts = [body, "", "### インラインコメント予定", ""];
+	for (const comment of comments) {
+		parts.push(`- \`${comment.path}:${comment.line}\` (${comment.side})`);
+		parts.push(comment.body);
+		parts.push("");
+	}
+	return parts.join("\n").trimEnd();
+}
+
+function normalizeReviewComments(comments) {
+	return comments
+		.map((item) => ({
+			path: item.path,
+			line: item.line ?? item.original_line ?? null,
+			side: item.side ?? "RIGHT",
+			body: item.body,
+		}))
+		.sort((a, b) =>
+			`${a.path}:${a.line}:${a.side}:${a.body}`.localeCompare(
+				`${b.path}:${b.line}:${b.side}:${b.body}`,
+			),
+		);
+}
+
+async function matchesExistingComments(endpoint, reviewId, expectedComments) {
+	if (reviewId === undefined || reviewId === null)
+		return expectedComments.length === 0;
+	const pages = await githubApi(`${endpoint}/${reviewId}/comments`, [
+		"--paginate",
+		"--slurp",
+	]);
+	const actual = pages.flat();
+	return isDeepStrictEqual(
+		normalizeReviewComments(actual),
+		normalizeReviewComments(expectedComments),
+	);
+}
+
+export async function postReview({ endpoint, head }, payload) {
+	const body = typeof payload === "string" ? payload : payload.body;
+	const comments = typeof payload === "string" ? [] : (payload.comments ?? []);
+	const fallbackCount =
+		typeof payload === "string" ? 0 : (payload.fallbackCount ?? 0);
+
+	const pages = await githubApi(endpoint, ["--paginate", "--slurp"]);
+	const candidates = pages
 		.flat()
-		.find(
+		.filter(
 			(item) =>
 				item.state === "COMMENTED" &&
 				item.commit_id === head &&
 				item.body === body,
 		);
-	if (existing) return { url: existing.html_url, alreadyPosted: true };
+	for (const existing of candidates) {
+		if (await matchesExistingComments(endpoint, existing.id, comments)) {
+			return {
+				url: existing.html_url,
+				alreadyPosted: true,
+				inlineCount: comments.length,
+				fallbackCount,
+			};
+		}
+	}
 
-	const result = await github(
+	const requestBody = {
+		commit_id: head,
+		event: "COMMENT",
+		body,
+		...(comments.length ? { comments } : {}),
+	};
+	const result = await githubApi(
 		endpoint,
 		["--method", "POST", "--input", "-"],
-		JSON.stringify({ commit_id: head, event: "COMMENT", body }),
+		JSON.stringify(requestBody),
 	);
 	if (typeof result?.html_url !== "string")
 		throw new Error("GitHub からレビューの URL が返されませんでした。");
-	return { url: result.html_url, alreadyPosted: false };
+	return {
+		url: result.html_url,
+		alreadyPosted: false,
+		inlineCount: comments.length,
+		fallbackCount,
+	};
 }

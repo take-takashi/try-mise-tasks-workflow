@@ -7,13 +7,13 @@ export async function cli(description, action, { usage = false } = {}) {
 		}
 		if (args.length && !usage)
 			throw new Error("不明な引数です: " + args.join(" "));
-		if (
-			args.length &&
-			usage &&
-			(process.env.usage_base === undefined ||
-				process.env.usage_head === undefined)
-		) {
-			throw new Error("引数は mise run から指定してください。");
+		if (args.length && usage) {
+			const hasUsageEnv = Array.isArray(usage)
+				? usage.some((key) => process.env[key] !== undefined)
+				: process.env.usage_base !== undefined &&
+					process.env.usage_head !== undefined;
+			if (!hasUsageEnv)
+				throw new Error("引数は mise run から指定してください。");
 		}
 		await action();
 	} catch (error) {
