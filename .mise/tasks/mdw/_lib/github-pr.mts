@@ -40,8 +40,18 @@ export async function githubGraphql(query, variables = {}) {
 		JSON.stringify({ query, variables }),
 	);
 	if (Array.isArray(result?.errors) && result.errors.length > 0) {
+		const summary = result.errors
+			.slice(0, 3)
+			.map((item) => {
+				const kind = typeof item?.type === "string" ? `[${item.type}] ` : "";
+				const message =
+					typeof item?.message === "string" ? item.message.trim() : "";
+				return `${kind}${message}`.slice(0, 160);
+			})
+			.filter(Boolean)
+			.join("; ");
 		throw new Error(
-			`GitHub GraphQL API がエラーを返しました（${result.errors.length} 件）。`,
+			`GitHub GraphQL API がエラーを返しました（${result.errors.length} 件）${summary ? `: ${summary}` : ""}。`,
 		);
 	}
 	if (!result || typeof result.data !== "object" || result.data === null) {

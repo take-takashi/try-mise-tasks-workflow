@@ -127,6 +127,7 @@ function fixture(t) {
 			"  const id = 'PRRC_reply_' + (state.replies.length + 1);",
 			`  const url = ${JSON.stringify(`${pr}#discussion_r900`)} + (state.replies.length + 1);`,
 			"  state.replies.push({ threadId, body, id, url });",
+			"  for (const page of state.pages) for (const node of page.nodes) if (node.id === threadId) node.comments.nodes.push({ id, databaseId: 900 + state.replies.length, body, createdAt: '2026-11-25T01:00:00Z', url, author: { login: 'bot' } });",
 			"  fs.writeFileSync(file, JSON.stringify(state));",
 			"  console.log(JSON.stringify({ data: { addPullRequestReviewThreadReply: { comment: { id, url } } } }));",
 			"  process.exit(0);",
@@ -205,6 +206,7 @@ test("mise から未解決スレッド取得・インライン返信・resolve �
 		thread_id: "PRRT_open_1",
 		body: "修正しました",
 		resolve: true,
+		already_replied: false,
 		already_resolved: false,
 		dry_run: true,
 	});
@@ -367,13 +369,53 @@ test("異常入力・対象外スレッド・GraphQL 障害・部分失敗を明
 		"--resolve",
 	);
 	assert.equal(partial.status, 1);
-	assert.match(partial.stderr, /返信.*完了しましたが、resolve に失敗しました/);
+	assert.match(
+		partial.stderr,
+		/返信.*完了しましたが、resolve に失敗しました.*resolve failed/,
+	);
+	assert.equal(f.readState().replies.length, 1);
+
+	// 同一本文での再実行は重複返信せず resolve のみ完了できる
+	f.writeState({ ...f.readState(), failResolve: false });
+	const retriedResolve = f.run(
+		f.root,
+		"mise",
+		"run",
+		"mdw:review:reply",
+		"--pr",
+		pr,
+		"--thread",
+		"PRRT_open_1",
+		"--body",
+		"修正しました",
+		"--resolve",
+	);
+	assert.equal(retriedResolve.status, 0, retriedResolve.stderr);
+	const retriedJson = JSON.parse(retriedResolve.stdout);
+	assert.equal(retriedJson.already_replied, true);
+	assert.equal(retriedJson.resolved, true);
+	assert.equal(f.readState().replies.length, 1);
+
+	// --resolve 単独指定（本文なし）も許可される
+	const resolveOnly = f.run(
+		f.root,
+		"mise",
+		"run",
+		"mdw:review:reply",
+		"--pr",
+		pr,
+		"--thread",
+		"PRRT_open_1",
+		"--resolve",
+	);
+	assert.equal(resolveOnly.status, 0, resolveOnly.stderr);
+	assert.equal(JSON.parse(resolveOnly.stdout).already_resolved, true);
 
 	// GraphQL errors 配列返却
 	f.writeState({ ...f.readState(), failGraphql: true });
 	const gqlErr = f.run(f.root, "mise", "run", "mdw:review:threads", "--pr", pr);
 	assert.equal(gqlErr.status, 1);
-	assert.match(gqlErr.stderr, /GraphQL API がエラーを返しました/);
+	assert.match(gqlErr.stderr, /GraphQL API がエラーを返しました.*boom/);
 
 	// クローズ済み PR
 	f.writeState({ ...f.readState(), failGraphql: false, prState: "closed" });

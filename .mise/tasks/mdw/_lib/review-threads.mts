@@ -126,14 +126,17 @@ export async function fetchReviewThreads(
 export function resolveReplyBody({
 	body,
 	bodyFile,
+	resolve = false,
 	cwd = process.env.MISE_ORIGINAL_CWD || process.cwd(),
 } = {}) {
 	const hasBody = typeof body === "string" && body.length > 0;
 	const hasBodyFile = typeof bodyFile === "string" && bodyFile.length > 0;
 	if (hasBody && hasBodyFile)
 		throw new Error("--body と --body-file は同時に指定できません。");
-	if (!hasBody && !hasBodyFile)
+	if (!hasBody && !hasBodyFile) {
+		if (resolve) return null;
 		throw new Error("--body または --body-file で返信本文を指定してください。");
+	}
 	let content = body;
 	if (hasBodyFile) {
 		const resolved = path.resolve(cwd, bodyFile);
@@ -150,12 +153,16 @@ export function resolveReplyBody({
 
 export async function replyToReviewThread(
 	target,
-	{ threadId, body, resolve = false, dryRun = false },
+	{ threadId, body = null, resolve = false, dryRun = false },
 ) {
 	if (typeof threadId !== "string" || !threadId.trim())
 		throw new Error("--thread にレビュースレッド ID を指定してください。");
-	if (typeof body !== "string" || !body.trim())
+	if (body === null || body === undefined) {
+		if (!resolve)
+			throw new Error("返信本文または --resolve を指定してください。");
+	} else if (typeof body !== "string" || !body.trim()) {
 		throw new Error("返信本文には空でない文字列を指定してください。");
+	}
 
 	const { threads } = await fetchReviewThreads(target, {
 		includeResolved: true,
@@ -166,32 +173,50 @@ export async function replyToReviewThread(
 			"指定したスレッド ID が対象の Pull Request に見つかりません。",
 		);
 
+	const lastComment = thread.comments.at(-1) ?? null;
+	const duplicateReply = typeof body === "string" && lastComment?.body === body;
+
 	if (dryRun) {
 		return {
 			pr: target.url,
 			thread_id: threadId,
 			body,
 			resolve: Boolean(resolve),
+			already_replied: duplicateReply,
 			already_resolved: thread.is_resolved,
 			dry_run: true,
 		};
 	}
 
-	const replyData = await githubGraphql(replyThreadMutation, {
-		threadId,
-		body,
-	});
-	const comment = replyData?.addPullRequestReviewThreadReply?.comment;
-	if (typeof comment?.id !== "string" || typeof comment?.url !== "string") {
-		throw new Error("スレッドへの返信結果を取得できませんでした。");
+	let commentId = null;
+	let commentUrl = null;
+	let alreadyReplied = false;
+	if (typeof body === "string") {
+		if (duplicateReply) {
+			commentId = lastComment.id;
+			commentUrl = lastComment.url;
+			alreadyReplied = true;
+		} else {
+			const replyData = await githubGraphql(replyThreadMutation, {
+				threadId,
+				body,
+			});
+			const comment = replyData?.addPullRequestReviewThreadReply?.comment;
+			if (typeof comment?.id !== "string" || typeof comment?.url !== "string") {
+				throw new Error("スレッドへの返信結果を取得できませんでした。");
+			}
+			commentId = comment.id;
+			commentUrl = comment.url;
+		}
 	}
 
 	if (!resolve) {
 		return {
 			pr: target.url,
 			thread_id: threadId,
-			comment_id: comment.id,
-			comment_url: comment.url,
+			comment_id: commentId,
+			comment_url: commentUrl,
+			already_replied: alreadyReplied,
 			resolved: thread.is_resolved,
 			already_resolved: thread.is_resolved,
 		};
@@ -201,8 +226,9 @@ export async function replyToReviewThread(
 		return {
 			pr: target.url,
 			thread_id: threadId,
-			comment_id: comment.id,
-			comment_url: comment.url,
+			comment_id: commentId,
+			comment_url: commentUrl,
+			already_replied: alreadyReplied,
 			resolved: true,
 			already_resolved: true,
 		};
@@ -214,20 +240,23 @@ export async function replyToReviewThread(
 	try {
 		resolveData = await githubGraphql(resolveThreadMutation, { threadId });
 	} catch (error) {
-		throw new Error(
-			`スレッドへの返信（${comment.url}）は完了しましたが、resolve に失敗しました: ${error.message}`,
-		);
+		const suffix = commentUrl
+			? `スレッドへの返信（${commentUrl}）は完了しましたが、`
+			: "";
+		throw new Error(`${suffix}resolve に失敗しました: ${error.message}`);
 	}
 	if (!resolveData?.resolveReviewThread?.thread?.isResolved) {
-		throw new Error(
-			`スレッドへの返信（${comment.url}）は完了しましたが、resolve 状態を確認できませんでした。`,
-		);
+		const suffix = commentUrl
+			? `スレッドへの返信（${commentUrl}）は完了しましたが、`
+			: "";
+		throw new Error(`${suffix}resolve 状態を確認できませんでした。`);
 	}
 	return {
 		pr: target.url,
 		thread_id: threadId,
-		comment_id: comment.id,
-		comment_url: comment.url,
+		comment_id: commentId,
+		comment_url: commentUrl,
+		already_replied: alreadyReplied,
 		resolved: true,
 		already_resolved: false,
 	};

@@ -265,6 +265,16 @@ test("mise から指摘を評価し、採用分をインラインコメントと
 	assert.equal(retried.alreadyPosted, true);
 	assert.equal(f.readState().reviews.length, 1);
 
+	// 同じ commit_id・同じ body でもインラインコメントが異なる場合は新規投稿される
+	const withDifferentInline = f.readState();
+	withDifferentInline.reviews[0].comments = [
+		{ ...postedReview.comments[0], body: "別のインライン本文" },
+	];
+	f.writeState(withDifferentInline);
+	const reposted = JSON.parse(f.ok(...f.task("post", "--pr", pr)));
+	assert.equal(reposted.alreadyPosted, false);
+	assert.equal(f.readState().reviews.length, 2);
+
 	f.summary.reviews[0].review.limitations.push("新しい制限");
 	f.writeSummary();
 	const stale = f.run(...f.task("post", "--pr", pr));

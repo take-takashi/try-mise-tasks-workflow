@@ -22,8 +22,8 @@ export async function run({
 	resolve = false,
 	dryRun = false,
 } = {}) {
-	// 返信本文の指定を検証し、必要ならファイルから読み込む。
-	const message = resolveReplyBody({ body, bodyFile });
+	// 返信本文の指定を検証し、必要ならファイルから読み込む（--resolve 単独指定時は本文なしを許可する）。
+	const message = resolveReplyBody({ body, bodyFile, resolve });
 	// 対象のオープンな Pull Request を確認する。
 	const target = await verifyOpenPullRequest(pr);
 	// 指定スレッドが対象 PR に属することを確認し、返信（および必要なら resolve）を行う。
