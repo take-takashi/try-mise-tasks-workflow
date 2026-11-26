@@ -153,6 +153,7 @@ function fixture(t, { branch = "feat/25-sample", prBody = "Closes #25" } = {}) {
 			"}",
 			"if (payload.query.includes('resolveReviewThread')) {",
 			"  const { threadId } = payload.variables;",
+			"  if (state.failResolveThreadId && state.failResolveThreadId === threadId) { console.log(JSON.stringify({ errors: [{ type: 'UNPROCESSABLE', message: 'resolve failed' }] })); process.exit(1); }",
 			"  state.resolvedIds.push(threadId);",
 			"  const target = state.threads.find((item) => item.id === threadId);",
 			"  if (target) target.isResolved = true;",
@@ -199,6 +200,16 @@ function fixture(t, { branch = "feat/25-sample", prBody = "Closes #25" } = {}) {
 			"} else if (mode === 'test-file-edit') {",
 			"  fs.writeFileSync(path.join(process.cwd(), 'tests/sample.test.mts'), 'changed\\n');",
 			"  output = { commit_message: 'fix: テスト修正', results: [{ thread_id: 'PRRT_TEST', status: 'fixed', summary: 'テスト修正' }] };",
+			"} else if (mode === 'partial-file-fix') {",
+			"  fs.writeFileSync(path.join(process.cwd(), 'app.txt'), 'fixed-partial\\n');",
+			"  output = { commit_message: 'fix: 両方直したつもり', results: [{ thread_id: 'PRRT_1', status: 'fixed', summary: 'app.txt 修正' }, { thread_id: 'PRRT_OTHER', status: 'fixed', summary: 'other.txt 修正' }] };",
+			"} else if (mode === 'tracked-out-of-scope') {",
+			"  fs.writeFileSync(path.join(process.cwd(), 'app.txt'), 'fixed-1\\n');",
+			"  fs.writeFileSync(path.join(process.cwd(), 'other.txt'), 'tampered\\n');",
+			"  output = { commit_message: 'fix: 追跡済み範囲外を編集', results: [{ thread_id: 'PRRT_1', status: 'fixed', summary: '修正' }] };",
+			"} else if (mode === 'needs-human-with-edit') {",
+			"  fs.writeFileSync(path.join(process.cwd(), 'app.txt'), 'stray-edit\\n');",
+			"  output = { commit_message: '', results: [{ thread_id: 'PRRT_1', status: 'needs_human', summary: '保留' }] };",
 			"}",
 			"fs.writeFileSync(file, JSON.stringify(state));",
 			"console.log(JSON.stringify({ status: 'SUCCESS', structured_output: output, denied_actions: [] }));",
@@ -850,4 +861,227 @@ test("信頼境界・範囲外変更・テスト変更時の検証停止・部�
 	assert.equal(labelFailJson.wait_label.issue_number, 25);
 	assert.ok(labelFailJson.wait_label.error);
 	assert.match(labelFailRes.stderr, /mdw:wait ラベル付与に失敗/);
+});
+
+test("複数反復完走・未変更 fixed 検出・既存ファイル範囲外編集・needs_human 残存差分・resolve のみ失敗復旧を検証する", (t) => {
+	// 1. PR 本文の安全整数超過はスキップしてブランチ名へフォールバックする
+	assert.equal(
+		resolveLinkedIssueNumber({
+			prBody: "Closes #99999999999999999999",
+			branchName: "feat/25-sample",
+		}),
+		25,
+	);
+	assert.equal(
+		resolveLinkedIssueNumber({
+			prBody: "",
+			branchName: "feat/99999999999999999999-huge",
+		}),
+		null,
+	);
+
+	// 2. --max-iterations 2 で 1 回目後に追加された未解決スレッドを 2 回目で完走する
+	const fMulti = fixture(t);
+	const sMulti = fMulti.readState();
+	sMulti.spawnThreadAfterResolve = {
+		id: "PRRT_2",
+		isResolved: false,
+		isOutdated: false,
+		path: "app.txt",
+		line: 1,
+		originalLine: 1,
+		comments: {
+			pageInfo: { hasNextPage: false },
+			nodes: [
+				{
+					id: "PRRC_2",
+					databaseId: 20,
+					body: "2 回目の指摘です",
+					createdAt: "2026-11-26T00:02:00Z",
+					url: `${pr}#discussion_r20`,
+					authorAssociation: "OWNER",
+					author: { login: "owner" },
+				},
+			],
+		},
+	};
+	fMulti.writeState(sMulti);
+	const multiRes = fMulti.run(
+		{},
+		"mise",
+		"run",
+		"mdw:review:fix",
+		"--pr",
+		pr,
+		"--max-iterations",
+		"2",
+	);
+	assert.equal(multiRes.status, 0, multiRes.stderr);
+	const multiJson = JSON.parse(multiRes.stdout);
+	assert.equal(multiJson.status, "completed");
+	assert.equal(multiJson.iterations.length, 2);
+	assert.equal(multiJson.remaining_threads, 0);
+	assert.deepEqual(fMulti.readState().resolvedIds, ["PRRT_1", "PRRT_2"]);
+	assert.deepEqual(fMulti.readState().labels, []);
+
+	// 3. 複数ファイル対象で片方しか編集していないのに両方 fixed と報告された場合は拒否する
+	const fPartialFile = fixture(t);
+	fs.writeFileSync(path.join(fPartialFile.repoDir, "other.txt"), "initial\n");
+	fPartialFile.runGit(fPartialFile.repoDir, "add", "other.txt");
+	fPartialFile.runGit(fPartialFile.repoDir, "commit", "-m", "add other");
+	fPartialFile.runGit(fPartialFile.repoDir, "push", "origin", "feat/25-sample");
+	const sPartialFile = fPartialFile.readState();
+	sPartialFile.headSha = fPartialFile.runGit(
+		fPartialFile.repoDir,
+		"rev-parse",
+		"HEAD",
+	);
+	sPartialFile.threads.push({
+		id: "PRRT_OTHER",
+		isResolved: false,
+		isOutdated: false,
+		path: "other.txt",
+		line: 1,
+		originalLine: 1,
+		comments: {
+			pageInfo: { hasNextPage: false },
+			nodes: [
+				{
+					id: "PRRC_OTHER",
+					databaseId: 21,
+					body: "other.txt も修正してください",
+					createdAt: "2026-11-26T00:00:00Z",
+					url: `${pr}#discussion_r21`,
+					authorAssociation: "OWNER",
+					author: { login: "owner" },
+				},
+			],
+		},
+	});
+	sPartialFile.aiScript = { mode: "partial-file-fix" };
+	fPartialFile.writeState(sPartialFile);
+	const partialFileRes = fPartialFile.run(
+		{},
+		"mise",
+		"run",
+		"mdw:review:fix",
+		"--pr",
+		pr,
+	);
+	assert.equal(partialFileRes.status, 1);
+	assert.match(
+		partialFileRes.stderr,
+		/対象ファイルに変更がありません: other\.txt/,
+	);
+	assert.equal(fPartialFile.readState().resolvedIds.length, 0);
+	assert.deepEqual(fPartialFile.readState().labels, [
+		{ issue: 25, labels: ["mdw:wait"] },
+	]);
+
+	// 4. 既存の追跡済みファイルをスレッド対象外で編集した場合は拒否する
+	const fTracked = fixture(t);
+	fs.writeFileSync(path.join(fTracked.repoDir, "other.txt"), "initial\n");
+	fTracked.runGit(fTracked.repoDir, "add", "other.txt");
+	fTracked.runGit(fTracked.repoDir, "commit", "-m", "add other");
+	fTracked.runGit(fTracked.repoDir, "push", "origin", "feat/25-sample");
+	const sTracked = fTracked.readState();
+	sTracked.headSha = fTracked.runGit(fTracked.repoDir, "rev-parse", "HEAD");
+	sTracked.aiScript = { mode: "tracked-out-of-scope" };
+	fTracked.writeState(sTracked);
+	const trackedRes = fTracked.run(
+		{},
+		"mise",
+		"run",
+		"mdw:review:fix",
+		"--pr",
+		pr,
+	);
+	assert.equal(trackedRes.status, 1);
+	assert.match(trackedRes.stderr, /対象スレッド外のファイル（other\.txt）/);
+	assert.deepEqual(fTracked.readState().labels, [
+		{ issue: 25, labels: ["mdw:wait"] },
+	]);
+
+	// 5. needs_human のみ返しつつ作業ツリーを変更した場合は拒否して mdw:wait を付与する
+	const fStray = fixture(t);
+	fStray.writeState({
+		...fStray.readState(),
+		aiScript: { mode: "needs-human-with-edit" },
+	});
+	const strayRes = fStray.run({}, "mise", "run", "mdw:review:fix", "--pr", pr);
+	assert.equal(strayRes.status, 1);
+	assert.match(
+		strayRes.stderr,
+		/修正対象が 0 件にもかかわらず、作業ツリーに未コミットの変更が残っています/,
+	);
+	const strayJson = JSON.parse(strayRes.stdout);
+	assert.equal(strayJson.status, "failed");
+	assert.deepEqual(fStray.readState().labels, [
+		{ issue: 25, labels: ["mdw:wait"] },
+	]);
+
+	// 6. 返信成功後に resolve のみ失敗した場合は --body なしの --resolve 単独復旧コマンドを出力する
+	const fResolveOnly = fixture(t);
+	const sResolveOnly = fResolveOnly.readState();
+	sResolveOnly.failResolveThreadId = "PRRT_1";
+	fResolveOnly.writeState(sResolveOnly);
+	const resolveOnlyRes = fResolveOnly.run(
+		{},
+		"mise",
+		"run",
+		"mdw:review:fix",
+		"--pr",
+		pr,
+	);
+	assert.equal(resolveOnlyRes.status, 1);
+	const resolveOnlyJson = JSON.parse(resolveOnlyRes.stdout);
+	assert.equal(resolveOnlyJson.status, "partial_failure");
+	assert.equal(resolveOnlyJson.iterations[0].failed_replies[0].replied, true);
+	assert.equal(
+		resolveOnlyJson.iterations[0].failed_replies[0].recovery_command,
+		`mise run mdw:review:reply --pr ${pr} --thread PRRT_1 --resolve`,
+	);
+
+	// 7. 検証コマンド失敗時の出力抜粋とプッシュ失敗時の unpushed_commit_sha / mdw:wait を確認する
+	const fExcerpt = fixture(t);
+	const excerptRes = fExcerpt.run(
+		{},
+		"mise",
+		"run",
+		"mdw:review:fix",
+		"--pr",
+		pr,
+		"--verify",
+		'echo "verify-detail-boom" >&2; exit 3',
+	);
+	assert.equal(excerptRes.status, 1);
+	assert.match(excerptRes.stderr, /verify-detail-boom/);
+	const excerptJson = JSON.parse(excerptRes.stdout);
+	assert.equal(excerptJson.status, "failed");
+	assert.match(excerptJson.verification_output_excerpt, /verify-detail-boom/);
+
+	const fPushWait = fixture(t);
+	fPushWait.runGit(
+		fPushWait.repoDir,
+		"remote",
+		"set-url",
+		"--push",
+		"origin",
+		path.join(fPushWait.repoDir, "nonexistent-remote.git"),
+	);
+	const pushWaitRes = fPushWait.run(
+		{},
+		"mise",
+		"run",
+		"mdw:review:fix",
+		"--pr",
+		pr,
+	);
+	assert.equal(pushWaitRes.status, 1);
+	const pushWaitJson = JSON.parse(pushWaitRes.stdout);
+	assert.equal(pushWaitJson.status, "failed");
+	assert.match(pushWaitJson.unpushed_commit_sha, /^[0-9a-f]{40}$/);
+	assert.deepEqual(fPushWait.readState().labels, [
+		{ issue: 25, labels: ["mdw:wait"] },
+	]);
 });

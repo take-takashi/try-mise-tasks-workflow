@@ -307,13 +307,27 @@ export async function replyToReviewThread(
 		const suffix = commentUrl
 			? `スレッドへの返信（${commentUrl}）は完了しましたが、`
 			: "";
-		throw new Error(`${suffix}resolve に失敗しました: ${error.message}`);
+		const wrapped = new Error(
+			`${suffix}resolve に失敗しました: ${error.message}`,
+		) as Error & { replied?: boolean; commentUrl?: string | null };
+		if (commentId || alreadyReplied) {
+			wrapped.replied = true;
+			wrapped.commentUrl = commentUrl;
+		}
+		throw wrapped;
 	}
 	if (!resolveData?.resolveReviewThread?.thread?.isResolved) {
 		const suffix = commentUrl
 			? `スレッドへの返信（${commentUrl}）は完了しましたが、`
 			: "";
-		throw new Error(`${suffix}resolve 状態を確認できませんでした。`);
+		const wrapped = new Error(
+			`${suffix}resolve 状態を確認できませんでした。`,
+		) as Error & { replied?: boolean; commentUrl?: string | null };
+		if (commentId || alreadyReplied) {
+			wrapped.replied = true;
+			wrapped.commentUrl = commentUrl;
+		}
+		throw wrapped;
 	}
 	return {
 		pr: target.url,

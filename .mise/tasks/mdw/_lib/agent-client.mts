@@ -119,7 +119,10 @@ function agyReadOnlySettings(tools) {
 	});
 }
 
-function agyWritableSettings(cwd) {
+function agyWritableSettings(cwd, denyWritePaths = []) {
+	const deniedWriteRules = [...new Set([".git", ...denyWritePaths])].map(
+		(entry) => `write_file(${path.resolve(cwd, entry)})`,
+	);
 	return JSON.stringify({
 		agentMode: "",
 		enableTerminalSandbox: true,
@@ -131,9 +134,7 @@ function agyWritableSettings(cwd) {
 				"read_url(*)",
 				"execute_url(*)",
 				"mcp(*)",
-				`write_file(${path.join(cwd, ".git")})`,
-				`write_file(${path.join(cwd, ".github")})`,
-				`write_file(${path.join(cwd, ".mdw")})`,
+				...deniedWriteRules,
 			],
 		},
 	});
@@ -497,21 +498,30 @@ export class AgentClient {
 		});
 	}
 
-	assertWritableProvider(settings) {
+	assertWritableProvider(settings, role?: string) {
 		if (settings?.provider === "codex") {
+			const envKey = `MDW_${this.workflow.toUpperCase()}${role ? `_${role.toUpperCase()}` : ""}_PROVIDER`;
 			throw new Error(
-				"書き込みを伴う構造化実行ではシェル実行を禁止できないため codex は使用できません。MDW_REVIEW_FIX_PROVIDER に agy または claude を指定してください。",
+				`書き込みを伴う構造化実行ではシェル実行を禁止できないため codex は使用できません。${envKey} に agy または claude を指定してください。`,
 			);
 		}
 	}
 
-	async runWritableStructured(settings, prompt, schema) {
-		this.assertWritableProvider(settings);
+	async runWritableStructured(
+		settings,
+		prompt,
+		schema,
+		{
+			denyWritePaths = [],
+			role,
+		}: { denyWritePaths?: string[]; role?: string } = {},
+	) {
+		this.assertWritableProvider(settings, role);
 		return await this.#executeStructured(settings, prompt, schema, {
 			codexSandbox: "workspace-write",
 			claudeTools: "Read,Grep,Glob,Edit,Write",
 			claudePermissionMode: "acceptEdits",
-			agySettings: agyWritableSettings(this.cwd),
+			agySettings: agyWritableSettings(this.cwd, denyWritePaths),
 			agyInput: prompt,
 		});
 	}

@@ -14,6 +14,12 @@ const maxAllowedIterations = 5;
 const validStatuses = ["fixed", "needs_human"];
 const trustedAuthorAssociations = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 const protectedTopLevelDirs = new Set([".git", ".github", ".mdw"]);
+export const writableDenyPaths = [
+	...protectedTopLevelDirs,
+	"mise.toml",
+	".mise.toml",
+	".env",
+];
 const verificationTopLevelDirs = new Set(["tests", "test", ".mise", "scripts"]);
 const verificationConfigFiles = new Set([
 	"package.json",
@@ -105,6 +111,13 @@ export function resolveVerifyCommand(flagValue, env = process.env) {
 	return null;
 }
 
+function parseSafePositiveInt(raw) {
+	const text = String(raw).trim();
+	if (!/^[1-9]\d*$/.test(text)) return null;
+	const value = Number(text);
+	return Number.isSafeInteger(value) ? value : null;
+}
+
 export function resolveLinkedIssueNumber({
 	explicitIssue,
 	prBody = "",
@@ -115,10 +128,10 @@ export function resolveLinkedIssueNumber({
 		explicitIssue !== null &&
 		explicitIssue !== ""
 	) {
-		const text = String(explicitIssue).trim();
-		if (!/^[1-9]\d*$/.test(text) || !Number.isSafeInteger(Number(text)))
+		const parsed = parseSafePositiveInt(explicitIssue);
+		if (parsed === null)
 			throw new Error("--issue には正の整数を指定してください。");
-		return Number(text);
+		return parsed;
 	}
 	const bodyMatch =
 		typeof prBody === "string"
@@ -126,12 +139,14 @@ export function resolveLinkedIssueNumber({
 					prBody,
 				)
 			: null;
-	if (bodyMatch) return Number(bodyMatch[1]);
+	const bodyIssue = bodyMatch ? parseSafePositiveInt(bodyMatch[1]) : null;
+	if (bodyIssue !== null) return bodyIssue;
 	const branchMatch =
 		typeof branchName === "string"
 			? /^[^/]+\/([1-9]\d*)(?:-|$)/.exec(branchName)
 			: null;
-	if (branchMatch) return Number(branchMatch[1]);
+	const branchIssue = branchMatch ? parseSafePositiveInt(branchMatch[1]) : null;
+	if (branchIssue !== null) return branchIssue;
 	return null;
 }
 
@@ -466,6 +481,12 @@ export function validateChangedPaths(changes, allowedPaths, cwd) {
 			}
 		}
 	}
+	const missing = [...allowedPaths].filter((filePath) => !seen.has(filePath));
+	if (missing.length > 0) {
+		throw new Error(
+			`AI が修正済みと報告した対象ファイルに変更がありません: ${missing.join(", ")}`,
+		);
+	}
 	return {
 		paths: validated,
 		touchesVerificationCode: validated.some(isVerificationExecutablePath),
@@ -481,22 +502,38 @@ export function verificationEnvironment(environment = process.env) {
 	return sanitized;
 }
 
+function summarizeCommandOutput(stdout, stderr, maxChars = 500) {
+	const combined = [stderr.toString("utf8"), stdout.toString("utf8")]
+		.map((part) => part.trim())
+		.filter(Boolean)
+		.join("\n");
+	if (!combined) return "";
+	return combined.length > maxChars
+		? `…${combined.slice(combined.length - maxChars)}`
+		: combined;
+}
+
 export async function runVerificationCommand(
 	verifyCommand,
 	{ cwd, env = process.env } = {},
 ) {
-	if (!verifyCommand) return { skipped: true, ok: true, code: 0 };
+	if (!verifyCommand)
+		return { skipped: true, ok: true, code: 0, output_excerpt: "" };
 	const timeout = timeoutSeconds(env);
-	const { code, signal } = await runCommand(["sh", "-c", verifyCommand], {
-		cwd,
-		env: verificationEnvironment(env),
-		timeout,
-		allowNonZero: true,
-	});
+	const { stdout, stderr, code, signal } = await runCommand(
+		["sh", "-c", verifyCommand],
+		{
+			cwd,
+			env: verificationEnvironment(env),
+			timeout,
+			allowNonZero: true,
+		},
+	);
 	return {
 		skipped: false,
 		ok: code === 0,
 		code: code ?? signal,
+		output_excerpt: code === 0 ? "" : summarizeCommandOutput(stdout, stderr),
 	};
 }
 
@@ -546,9 +583,11 @@ export async function commitAndPushFixes({
 			timeout: 60,
 		});
 	} catch (error) {
-		throw new Error(
+		const wrapped = new Error(
 			`コミット（${commitSha.slice(0, 7)}）は作成されましたが、プッシュに失敗したため resolve を中断しました: ${error.message}`,
-		);
+		) as Error & { unpushedCommitSha?: string };
+		wrapped.unpushedCommitSha = commitSha;
+		throw wrapped;
 	}
 	return commitSha;
 }
@@ -581,13 +620,17 @@ export async function reportThreadResults(target, plan, { commitSha }) {
 			});
 			replies.push({ ...result, status: item.status, ok: true });
 		} catch (error) {
+			const replied = Boolean(error?.replied);
 			failed.push({
 				thread_id: item.thread_id,
 				status: item.status,
 				ok: false,
+				replied,
 				error: error.message,
 				recovery_command: isFixed
-					? `mise run mdw:review:reply --pr ${target.url} --thread ${item.thread_id} --resolve --body "コミット ${shortSha} で修正しました。"`
+					? replied
+						? `mise run mdw:review:reply --pr ${target.url} --thread ${item.thread_id} --resolve`
+						: `mise run mdw:review:reply --pr ${target.url} --thread ${item.thread_id} --resolve --body "コミット ${shortSha} で修正しました。"`
 					: `mise run mdw:review:reply --pr ${target.url} --thread ${item.thread_id} --body "自動修正を保留しました。"`,
 			});
 		}

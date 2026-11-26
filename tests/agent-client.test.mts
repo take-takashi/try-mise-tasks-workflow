@@ -439,10 +439,15 @@ test("runWritableStructured はシェル禁止可能なプロバイダーで最�
 		},
 	});
 	await assert.rejects(
-		codexClient.runWritableStructured(codexClient.config("fix"), "fix prompt", {
-			type: "object",
-		}),
-		/シェル実行を禁止できないため codex は使用できません/,
+		codexClient.runWritableStructured(
+			codexClient.config("fix"),
+			"fix prompt",
+			{
+				type: "object",
+			},
+			{ role: "fix" },
+		),
+		/シェル実行を禁止できないため codex は使用できません。MDW_REVIEW_FIX_PROVIDER/,
 	);
 
 	for (const provider of ["claude", "agy"]) {
@@ -483,6 +488,7 @@ test("runWritableStructured はシェル禁止可能なプロバイダーで最�
 			client.config("fix"),
 			"fix prompt",
 			{ type: "object" },
+			{ denyWritePaths: [".github", ".mdw"], role: "fix" },
 		);
 		assert.deepEqual(result, { data: { ok: true }, permissionDenials: 0 });
 		assert.equal(calls.length, 1);

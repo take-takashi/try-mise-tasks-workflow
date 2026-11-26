@@ -13,11 +13,13 @@ export function runCommand(
 ) {
 	return new Promise((resolve, reject) => {
 		let child: ReturnType<typeof spawn>;
+		const useProcessGroup = process.platform !== "win32";
 		try {
 			child = spawn(command[0], command.slice(1), {
 				cwd,
 				env,
 				shell: false,
+				detached: useProcessGroup,
 				stdio: ["pipe", "pipe", "pipe"],
 			});
 		} catch (error) {
@@ -30,6 +32,12 @@ export function runCommand(
 			finished = false;
 		const timer = setTimeout(() => {
 			timedOut = true;
+			if (useProcessGroup && child.pid) {
+				try {
+					process.kill(-child.pid, "SIGKILL");
+					return;
+				} catch {}
+			}
 			child.kill("SIGKILL");
 		}, timeout * 1000);
 		child.stdout.on("data", (chunk) => stdout.push(chunk));
