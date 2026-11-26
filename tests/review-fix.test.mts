@@ -210,6 +210,10 @@ function fixture(t, { branch = "feat/25-sample", prBody = "Closes #25" } = {}) {
 			"} else if (mode === 'needs-human-with-edit') {",
 			"  fs.writeFileSync(path.join(process.cwd(), 'app.txt'), 'stray-edit\\n');",
 			"  output = { commit_message: '', results: [{ thread_id: 'PRRT_1', status: 'needs_human', summary: '保留' }] };",
+			"} else if (mode === 'ignored-file-tamper') {",
+			"  fs.writeFileSync(path.join(process.cwd(), 'app.txt'), 'fixed-1\\n');",
+			"  fs.writeFileSync(path.join(process.cwd(), 'mise.local.toml'), '[env]\\nPWN=\"1\"\\n');",
+			"  output = { commit_message: 'fix: 修正', results: [{ thread_id: 'PRRT_1', status: 'fixed', summary: '修正' }] };",
 			"}",
 			"fs.writeFileSync(file, JSON.stringify(state));",
 			"console.log(JSON.stringify({ status: 'SUCCESS', structured_output: output, denied_actions: [] }));",
@@ -1082,6 +1086,42 @@ test("複数反復完走・未変更 fixed 検出・既存ファイル範囲外�
 	assert.equal(pushWaitJson.status, "failed");
 	assert.match(pushWaitJson.unpushed_commit_sha, /^[0-9a-f]{40}$/);
 	assert.deepEqual(fPushWait.readState().labels, [
+		{ issue: 25, labels: ["mdw:wait"] },
+	]);
+
+	// 8. .gitignore 対象ファイルへの書き込みは検証コマンド実行前に検出して中断する
+	const fIgnored = fixture(t);
+	fs.writeFileSync(
+		path.join(fIgnored.repoDir, ".gitignore"),
+		"mise.local.toml\n",
+	);
+	fIgnored.runGit(fIgnored.repoDir, "add", ".gitignore");
+	fIgnored.runGit(fIgnored.repoDir, "commit", "-m", "add gitignore");
+	fIgnored.runGit(fIgnored.repoDir, "push", "origin", "feat/25-sample");
+	const sIgnored = fIgnored.readState();
+	sIgnored.headSha = fIgnored.runGit(fIgnored.repoDir, "rev-parse", "HEAD");
+	sIgnored.aiScript = { mode: "ignored-file-tamper" };
+	fIgnored.writeState(sIgnored);
+	const ignoredRes = fIgnored.run(
+		{},
+		"mise",
+		"run",
+		"mdw:review:fix",
+		"--pr",
+		pr,
+		"--verify",
+		"echo SHOULD_NOT_RUN > ran-ignored.txt",
+	);
+	assert.equal(ignoredRes.status, 1);
+	assert.match(
+		ignoredRes.stderr,
+		/Git 除外対象（\.gitignore）のファイルが変更されたため中断しました: mise\.local\.toml/,
+	);
+	assert.equal(
+		fs.existsSync(path.join(fIgnored.repoDir, "ran-ignored.txt")),
+		false,
+	);
+	assert.deepEqual(fIgnored.readState().labels, [
 		{ issue: 25, labels: ["mdw:wait"] },
 	]);
 });

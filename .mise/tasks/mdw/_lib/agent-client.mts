@@ -119,16 +119,25 @@ function agyReadOnlySettings(tools) {
 	});
 }
 
-function agyWritableSettings(cwd, denyWritePaths = []) {
-	const deniedWriteRules = [...new Set([".git", ...denyWritePaths])].map(
-		(entry) => `write_file(${path.resolve(cwd, entry)})`,
-	);
+function agyWritableSettings(
+	cwd,
+	{ allowWritePaths = [], denyWritePaths = [] } = {},
+) {
+	const writeAllows =
+		allowWritePaths.length > 0
+			? [...new Set(allowWritePaths)].map(
+					(entry) => `write_file(${path.resolve(cwd, entry)})`,
+				)
+			: [`write_file(${cwd})`];
+	const deniedWriteRules = [
+		...new Set([".git", ".claude", ".agents", ...denyWritePaths]),
+	].map((entry) => `write_file(${path.resolve(cwd, entry)})`);
 	return JSON.stringify({
 		agentMode: "",
 		enableTerminalSandbox: true,
 		toolPermission: "request-review",
 		permissions: {
-			allow: [`read_file(${cwd})`, `write_file(${cwd})`],
+			allow: [`read_file(${cwd})`, ...writeAllows],
 			deny: [
 				"command(*)",
 				"read_url(*)",
@@ -138,6 +147,29 @@ function agyWritableSettings(cwd, denyWritePaths = []) {
 			],
 		},
 	});
+}
+
+function claudeWritableSettings(denyWritePaths = []) {
+	const patterns = [
+		...new Set([
+			".git/**",
+			".claude/**",
+			".agents/**",
+			"mise*.toml",
+			".mise*.toml",
+			".env*",
+			...denyWritePaths.flatMap((entry) =>
+				entry.includes(".") && !entry.startsWith(".")
+					? [entry]
+					: [`${entry}`, `${entry}/**`],
+			),
+		]),
+	];
+	const deny = [
+		"Bash(*)",
+		...patterns.flatMap((pattern) => [`Edit(${pattern})`, `Write(${pattern})`]),
+	];
+	return JSON.stringify({ permissions: { deny } });
 }
 
 function config(workflow, role, env, cwd) {
@@ -354,7 +386,14 @@ export class AgentClient {
 		settings,
 		prompt,
 		schema,
-		{ codexSandbox, claudeTools, claudePermissionMode, agySettings, agyInput },
+		{
+			codexSandbox,
+			claudeTools,
+			claudePermissionMode,
+			claudeExtraArgs = [],
+			agySettings,
+			agyInput,
+		},
 	) {
 		const { provider, model, effort, billing, executable } = settings;
 		const env = childEnvironment(provider, billing, this.#environment);
@@ -404,6 +443,7 @@ export class AgentClient {
 					claudeTools,
 					"--permission-mode",
 					claudePermissionMode,
+					...claudeExtraArgs,
 					"--strict-mcp-config",
 					"--no-chrome",
 					"--no-session-persistence",
@@ -512,16 +552,30 @@ export class AgentClient {
 		prompt,
 		schema,
 		{
+			allowWritePaths = [],
 			denyWritePaths = [],
 			role,
-		}: { denyWritePaths?: string[]; role?: string } = {},
+		}: {
+			allowWritePaths?: string[];
+			denyWritePaths?: string[];
+			role?: string;
+		} = {},
 	) {
 		this.assertWritableProvider(settings, role);
 		return await this.#executeStructured(settings, prompt, schema, {
 			codexSandbox: "workspace-write",
 			claudeTools: "Read,Grep,Glob,Edit,Write",
 			claudePermissionMode: "acceptEdits",
-			agySettings: agyWritableSettings(this.cwd, denyWritePaths),
+			claudeExtraArgs: [
+				"--setting-sources",
+				"",
+				"--settings",
+				claudeWritableSettings(denyWritePaths),
+			],
+			agySettings: agyWritableSettings(this.cwd, {
+				allowWritePaths,
+				denyWritePaths,
+			}),
 			agyInput: prompt,
 		});
 	}

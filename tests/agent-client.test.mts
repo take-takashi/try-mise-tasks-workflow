@@ -488,7 +488,11 @@ test("runWritableStructured はシェル禁止可能なプロバイダーで最�
 			client.config("fix"),
 			"fix prompt",
 			{ type: "object" },
-			{ denyWritePaths: [".github", ".mdw"], role: "fix" },
+			{
+				allowWritePaths: ["app.txt"],
+				denyWritePaths: [".github", ".mdw"],
+				role: "fix",
+			},
 		);
 		assert.deepEqual(result, { data: { ok: true }, permissionDenials: 0 });
 		assert.equal(calls.length, 1);
@@ -500,13 +504,19 @@ test("runWritableStructured はシェル禁止可能なプロバイダーで最�
 				args[args.indexOf("--tools") + 1],
 				"Read,Grep,Glob,Edit,Write",
 			);
+			assert.equal(args[args.indexOf("--setting-sources") + 1], "");
+			const claudeSettings = JSON.parse(args[args.indexOf("--settings") + 1]);
+			assert.ok(claudeSettings.permissions.deny.includes("Bash(*)"));
+			assert.ok(claudeSettings.permissions.deny.includes("Write(.git/**)"));
+			assert.ok(claudeSettings.permissions.deny.includes("Write(.claude/**)"));
+			assert.ok(claudeSettings.permissions.deny.includes("Edit(.github/**)"));
 		} else {
 			assert.ok(args.includes("--sandbox"));
 			assert.ok(args.includes("--disable-slash-commands"));
 			const settings = JSON.parse(args[args.indexOf("--settings") + 1]);
 			assert.deepEqual(settings.permissions.allow, [
 				`read_file(${root})`,
-				`write_file(${root})`,
+				`write_file(${path.join(root, "app.txt")})`,
 			]);
 			assert.ok(settings.permissions.deny.includes("command(*)"));
 			assert.ok(settings.permissions.deny.includes("read_url(*)"));
@@ -514,6 +524,11 @@ test("runWritableStructured はシェル禁止可能なプロバイダーで最�
 			assert.ok(
 				settings.permissions.deny.includes(
 					`write_file(${path.join(root, ".git")})`,
+				),
+			);
+			assert.ok(
+				settings.permissions.deny.includes(
+					`write_file(${path.join(root, ".claude")})`,
 				),
 			);
 			assert.ok(

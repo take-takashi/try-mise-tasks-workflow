@@ -13,7 +13,13 @@ const defaultPromptDir = fileURLToPath(
 const maxAllowedIterations = 5;
 const validStatuses = ["fixed", "needs_human"];
 const trustedAuthorAssociations = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
-const protectedTopLevelDirs = new Set([".git", ".github", ".mdw"]);
+const protectedTopLevelDirs = new Set([
+	".git",
+	".github",
+	".mdw",
+	".claude",
+	".agents",
+]);
 export const writableDenyPaths = [
 	...protectedTopLevelDirs,
 	"mise.toml",
@@ -271,24 +277,33 @@ export function buildFixPrompt(
 	return `${staticGuide}\n\n${dynamicContext}`;
 }
 
+async function runGit(args, { cwd, input = "", timeout = 30 }) {
+	const { stdout, stderr, code, signal } = await runCommand(["git", ...args], {
+		cwd,
+		env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+		input,
+		timeout,
+		allowNonZero: true,
+	});
+	if (code !== 0) {
+		const detail = summarizeCommandOutput(stdout, stderr, 300);
+		throw new Error(
+			`git ${args[0]} が終了コード ${code ?? signal} で失敗しました${detail ? `: ${detail}` : ""}。`,
+		);
+	}
+	return stdout;
+}
+
 export async function verifyLocalWorktreeMatchesPr(
 	target,
 	{ cwd = process.env.MISE_ORIGINAL_CWD || process.cwd() } = {},
 ) {
-	const root = (
-		await runCommand(["git", "rev-parse", "--show-toplevel"], {
-			cwd,
-			timeout: 30,
-		})
-	).stdout
+	const root = (await runGit(["rev-parse", "--show-toplevel"], { cwd }))
 		.toString("utf8")
 		.trim();
 	const remoteUrl = (
-		await runCommand(["git", "remote", "get-url", "origin"], {
-			cwd: root,
-			timeout: 30,
-		})
-	).stdout
+		await runGit(["remote", "get-url", "origin"], { cwd: root })
+	)
 		.toString("utf8")
 		.trim();
 	const remoteRepo = parseGithubRepoFromRemote(remoteUrl);
@@ -301,12 +316,7 @@ export async function verifyLocalWorktreeMatchesPr(
 			"現在のリポジトリの origin が指定された Pull Request のリポジトリと一致しません。",
 		);
 	}
-	const status = (
-		await runCommand(["git", "status", "--porcelain"], {
-			cwd: root,
-			timeout: 30,
-		})
-	).stdout
+	const status = (await runGit(["status", "--porcelain"], { cwd: root }))
 		.toString("utf8")
 		.trim();
 	if (status) {
@@ -315,11 +325,8 @@ export async function verifyLocalWorktreeMatchesPr(
 		);
 	}
 	const branch = (
-		await runCommand(["git", "symbolic-ref", "--short", "HEAD"], {
-			cwd: root,
-			timeout: 30,
-		})
-	).stdout
+		await runGit(["symbolic-ref", "--short", "HEAD"], { cwd: root })
+	)
 		.toString("utf8")
 		.trim();
 	if (!target.headRef || branch !== target.headRef) {
@@ -327,12 +334,7 @@ export async function verifyLocalWorktreeMatchesPr(
 			`現在のブランチ（${branch}）が Pull Request のヘッドブランチ（${target.headRef}）と一致しません。`,
 		);
 	}
-	const headCommit = (
-		await runCommand(["git", "rev-parse", "HEAD"], {
-			cwd: root,
-			timeout: 30,
-		})
-	).stdout
+	const headCommit = (await runGit(["rev-parse", "HEAD"], { cwd: root }))
 		.toString("utf8")
 		.trim();
 	if (headCommit !== target.headSha) {
@@ -406,14 +408,9 @@ export function validateFixPlan(data, threads) {
 }
 
 export async function listWorkingTreeChanges(cwd) {
-	const { stdout } = await runCommand(
-		["git", "status", "--porcelain", "-z", "-uall"],
-		{
-			cwd,
-			timeout: 30,
-		},
-	);
-	const raw = stdout.toString("utf8");
+	const raw = (
+		await runGit(["status", "--porcelain", "-z", "-uall"], { cwd })
+	).toString("utf8");
 	if (!raw) return { entries: [], paths: [] };
 	const tokens = raw.split("\0");
 	if (tokens[tokens.length - 1] === "") tokens.pop();
@@ -440,6 +437,59 @@ export async function listWorkingTreeChanges(cwd) {
 		if (originalPath) seen.add(originalPath);
 	}
 	return { entries, paths: [...seen] };
+}
+
+export async function snapshotIgnoredFiles(cwd) {
+	const raw = (
+		await runGit(["status", "--porcelain", "-z", "-uall", "--ignored"], { cwd })
+	).toString("utf8");
+	const snapshot = new Map<string, string>();
+	if (!raw) return snapshot;
+	const tokens = raw.split("\0");
+	if (tokens[tokens.length - 1] === "") tokens.pop();
+	for (let index = 0; index < tokens.length; index++) {
+		const token = tokens[index];
+		if (token.length < 4 || token[2] !== " ") continue;
+		const status = token.slice(0, 2);
+		const filePath = token.slice(3);
+		if (
+			status[0] === "R" ||
+			status[1] === "R" ||
+			status[0] === "C" ||
+			status[1] === "C"
+		) {
+			index++;
+			continue;
+		}
+		if (status !== "!!") continue;
+		const absolute = path.join(cwd, filePath);
+		try {
+			const stat = fs.lstatSync(absolute);
+			snapshot.set(
+				filePath,
+				`${stat.isSymbolicLink() ? "L" : "F"}:${stat.size}:${stat.mtimeMs}`,
+			);
+		} catch {
+			snapshot.set(filePath, "missing");
+		}
+	}
+	return snapshot;
+}
+
+export async function assertNoIgnoredFileChanges(beforeSnapshot, cwd) {
+	const afterSnapshot = await snapshotIgnoredFiles(cwd);
+	const changed = [];
+	for (const [filePath, sig] of afterSnapshot.entries()) {
+		if (beforeSnapshot.get(filePath) !== sig) changed.push(filePath);
+	}
+	for (const filePath of beforeSnapshot.keys()) {
+		if (!afterSnapshot.has(filePath)) changed.push(filePath);
+	}
+	if (changed.length > 0) {
+		throw new Error(
+			`Git 除外対象（.gitignore）のファイルが変更されたため中断しました: ${changed.slice(0, 5).join(", ")}`,
+		);
+	}
 }
 
 export function validateChangedPaths(changes, allowedPaths, cwd) {
@@ -547,13 +597,10 @@ export async function commitAndPushFixes({
 		throw new Error("ステージ対象のファイルパスがありません。");
 	}
 	const allowed = new Set(paths);
-	await runCommand(["git", "add", "--", ...paths], { cwd, timeout: 30 });
+	await runGit(["add", "--", ...paths], { cwd });
 	const stagedRaw = (
-		await runCommand(["git", "diff", "--cached", "--name-only", "-z"], {
-			cwd,
-			timeout: 30,
-		})
-	).stdout.toString("utf8");
+		await runGit(["diff", "--cached", "--name-only", "-z"], { cwd })
+	).toString("utf8");
 	const staged = stagedRaw.split("\0").filter(Boolean);
 	if (!staged.length) {
 		throw new Error("コミット対象の差分がありません。");
@@ -564,21 +611,15 @@ export async function commitAndPushFixes({
 			`許可範囲外のファイルがステージされました: ${unexpected.join(", ")}`,
 		);
 	}
-	await runCommand(["git", "commit", "--file=-"], {
+	await runGit(["commit", "--file=-"], {
 		cwd,
 		input: `${commitMessage}\n`,
-		timeout: 30,
 	});
-	const commitSha = (
-		await runCommand(["git", "rev-parse", "HEAD"], {
-			cwd,
-			timeout: 30,
-		})
-	).stdout
+	const commitSha = (await runGit(["rev-parse", "HEAD"], { cwd }))
 		.toString("utf8")
 		.trim();
 	try {
-		await runCommand(["git", "push", "origin", `HEAD:refs/heads/${headRef}`], {
+		await runGit(["push", "origin", `HEAD:refs/heads/${headRef}`], {
 			cwd,
 			timeout: 60,
 		});

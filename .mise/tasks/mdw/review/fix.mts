@@ -10,6 +10,7 @@ import { AgentClient } from "../_lib/agent-client.mts";
 import { cli } from "../_lib/cli.mts";
 import { verifyOpenPullRequest } from "../_lib/github-pr.mts";
 import {
+	assertNoIgnoredFileChanges,
 	buildFixPrompt,
 	commitAndPushFixes,
 	fixPlanSchema,
@@ -20,6 +21,7 @@ import {
 	resolveMaxIterations,
 	resolveVerifyCommand,
 	runVerificationCommand,
+	snapshotIgnoredFiles,
 	tryEscalateToWait,
 	validateChangedPaths,
 	validateFixPlan,
@@ -127,14 +129,23 @@ export async function run({
 
 	for (let step = 1; step <= maxIterations; step++) {
 		try {
-			// 静的ルールを先頭にしたプロンプトで AI に修正と結果 JSON の生成を依頼する。
+			// AI 実行前に .gitignore 対象ファイルの状態を記録し、対象スレッドのファイルだけに書き込みを許可して実行する。
+			const ignoredBefore = await snapshotIgnoredFiles(worktree.root);
+			const targetWritePaths = [
+				...new Set(fixableThreads.map((thread) => thread.path).filter(Boolean)),
+			];
 			const prompt = buildFixPrompt(target, fixableThreads);
 			const { data } = await agent.runWritableStructured(
 				settings,
 				prompt,
 				fixPlanSchema,
-				{ denyWritePaths: writableDenyPaths, role: "fix" },
+				{
+					allowWritePaths: targetWritePaths,
+					denyWritePaths: writableDenyPaths,
+					role: "fix",
+				},
 			);
+			await assertNoIgnoredFileChanges(ignoredBefore, worktree.root);
 			const plan = validateFixPlan(data, fixableThreads);
 
 			// AI の報告と作業ツリーの差分有無に矛盾がないか確認する。
