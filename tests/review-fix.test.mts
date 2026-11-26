@@ -7,11 +7,14 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
 	buildFixPrompt,
+	isProtectedPath,
 	parseGithubRepoFromRemote,
+	partitionThreadsForAutoFix,
 	resolveLinkedIssueNumber,
 	resolveMaxIterations,
 	resolveVerifyCommand,
 	validateFixPlan,
+	verificationEnvironment,
 } from "../.mise/tasks/mdw/_lib/review-fix.mts";
 
 const project = fileURLToPath(new URL("..", import.meta.url));
@@ -89,6 +92,7 @@ function fixture(t, { branch = "feat/25-sample", prBody = "Closes #25" } = {}) {
 							body: "app.txt を fixed に直してください",
 							createdAt: "2026-11-26T00:00:00Z",
 							url: `${pr}#discussion_r1`,
+							authorAssociation: "OWNER",
 							author: { login: "reviewer" },
 						},
 					],
@@ -122,6 +126,7 @@ function fixture(t, { branch = "feat/25-sample", prBody = "Closes #25" } = {}) {
 			"}",
 			"const labelMatch = /^repos\\/example\\/project\\/issues\\/(\\d+)\\/labels$/.exec(args[3]);",
 			"if (labelMatch && args.includes('POST')) {",
+			"  if (state.failLabel) { console.log(JSON.stringify({ status: '403', message: 'Forbidden' })); process.exit(1); }",
 			"  const input = JSON.parse(fs.readFileSync(0, 'utf8'));",
 			"  state.labels.push({ issue: Number(labelMatch[1]), labels: input.labels });",
 			"  fs.writeFileSync(file, JSON.stringify(state));",
@@ -136,11 +141,12 @@ function fixture(t, { branch = "feat/25-sample", prBody = "Closes #25" } = {}) {
 			"}",
 			"if (payload.query.includes('addPullRequestReviewThreadReply')) {",
 			"  const { threadId, body } = payload.variables;",
+			"  if (state.failReplyThreadId && state.failReplyThreadId === threadId) { console.log(JSON.stringify({ errors: [{ type: 'SERVICE_UNAVAILABLE', message: 'temporary failure' }] })); process.exit(1); }",
 			"  const id = 'PRRC_reply_' + (state.replies.length + 1);",
 			`  const url = ${JSON.stringify(`${pr}#discussion_r800`)} + (state.replies.length + 1);`,
 			"  state.replies.push({ threadId, body, id, url });",
 			"  const target = state.threads.find((item) => item.id === threadId);",
-			"  if (target) target.comments.nodes.push({ id, databaseId: 800 + state.replies.length, body, createdAt: '2026-11-26T00:01:00Z', url, author: { login: 'bot' } });",
+			"  if (target) target.comments.nodes.push({ id, databaseId: 800 + state.replies.length, body, createdAt: '2026-11-26T00:01:00Z', url, authorAssociation: 'OWNER', author: { login: 'bot' } });",
 			"  fs.writeFileSync(file, JSON.stringify(state));",
 			"  console.log(JSON.stringify({ data: { addPullRequestReviewThreadReply: { comment: { id, url } } } }));",
 			"  process.exit(0);",
@@ -186,6 +192,13 @@ function fixture(t, { branch = "feat/25-sample", prBody = "Closes #25" } = {}) {
 			"  output = { commit_message: 'fix: 1件目を修正する', results: [{ thread_id: 'PRRT_1', status: 'fixed', summary: 'app.txt を修正しました' }, { thread_id: 'PRRT_2', status: 'needs_human', summary: '仕様判断が必要です' }] };",
 			"} else if (mode === 'no-edit-but-fixed') {",
 			"  output = { commit_message: 'fix: 編集なし', results: [{ thread_id: 'PRRT_1', status: 'fixed', summary: '直したつもり' }] };",
+			"} else if (mode === 'out-of-scope-edit') {",
+			"  fs.writeFileSync(path.join(process.cwd(), 'app.txt'), 'fixed-1\\n');",
+			"  fs.writeFileSync(path.join(process.cwd(), 'extra.txt'), 'injected\\n');",
+			"  output = { commit_message: 'fix: 範囲外も変更', results: [{ thread_id: 'PRRT_1', status: 'fixed', summary: '修正' }] };",
+			"} else if (mode === 'test-file-edit') {",
+			"  fs.writeFileSync(path.join(process.cwd(), 'tests/sample.test.mts'), 'changed\\n');",
+			"  output = { commit_message: 'fix: テスト修正', results: [{ thread_id: 'PRRT_TEST', status: 'fixed', summary: 'テスト修正' }] };",
 			"}",
 			"fs.writeFileSync(file, JSON.stringify(state));",
 			"console.log(JSON.stringify({ status: 'SUCCESS', structured_output: output, denied_actions: [] }));",
@@ -304,6 +317,73 @@ test("review-fix の設定・Issue 解決・プロンプト順序・計画検証
 			),
 		/1 行の有効な commit_message/,
 	);
+
+	assert.equal(isProtectedPath(".github/workflows/ci.yml"), true);
+	assert.equal(isProtectedPath(".mdw/models.env"), true);
+	assert.equal(isProtectedPath("mise.toml"), true);
+	assert.equal(isProtectedPath("mise.local.toml"), true);
+	assert.equal(isProtectedPath(".env.production"), true);
+	assert.equal(isProtectedPath("../outside.txt"), true);
+	assert.equal(isProtectedPath("app.txt"), false);
+
+	const partitioned = partitionThreadsForAutoFix([
+		{
+			id: "T_OK",
+			path: "app.txt",
+			line: 1,
+			comments_truncated: false,
+			comments: [{ author_association: "OWNER" }],
+		},
+		{
+			id: "T_UNTRUSTED",
+			path: "app.txt",
+			line: 2,
+			comments_truncated: false,
+			comments: [
+				{ author_association: "OWNER" },
+				{ author_association: "NONE" },
+			],
+		},
+		{
+			id: "T_TRUNC",
+			path: "app.txt",
+			line: 3,
+			comments_truncated: true,
+			comments: [{ author_association: "OWNER" }],
+		},
+		{
+			id: "T_PROTECTED",
+			path: ".github/workflows/ci.yml",
+			line: 4,
+			comments_truncated: false,
+			comments: [{ author_association: "MEMBER" }],
+		},
+	]);
+	assert.deepEqual(
+		partitioned.fixableThreads.map((t) => t.id),
+		["T_OK"],
+	);
+	assert.deepEqual(
+		partitioned.skippedThreads.map((t) => [t.id, t.reason]),
+		[
+			["T_UNTRUSTED", "untrusted_author"],
+			["T_TRUNC", "untrusted_author"],
+			["T_PROTECTED", "protected_path"],
+		],
+	);
+
+	const verifyEnv = verificationEnvironment({
+		PATH: "/usr/bin",
+		GH_TOKEN: "secret-gh",
+		OPENAI_API_KEY: "secret-oa",
+		CUSTOM_APP_SECRET: "secret-custom",
+		NORMAL_VAR: "ok",
+	});
+	assert.equal(verifyEnv.PATH, "/usr/bin");
+	assert.equal(verifyEnv.NORMAL_VAR, "ok");
+	assert.equal("GH_TOKEN" in verifyEnv, false);
+	assert.equal("OPENAI_API_KEY" in verifyEnv, false);
+	assert.equal("CUSTOM_APP_SECRET" in verifyEnv, false);
 });
 
 test("mdw:review:fix が未解決スレッドを修正・検証・プッシュ・返信＆resolve まで完走する", (t) => {
@@ -329,16 +409,16 @@ test("mdw:review:fix が未解決スレッドを修正・検証・プッシュ�
 	assert.equal(f.readState().aiCalls, 0);
 	assert.equal(f.readState().replies.length, 0);
 
-	// 本番実行：修正 → 検証 → コミット＆プッシュ → 返信＆resolve
+	// 本番実行：修正 → 検証（秘密情報除外＆副作用ファイル未ステージ） → コミット＆プッシュ → 返信＆resolve
 	const runRes = f.run(
-		{},
+		{ GH_TOKEN: "must-not-leak", CUSTOM_SECRET: "must-not-leak" },
 		"mise",
 		"run",
 		"mdw:review:fix",
 		"--pr",
 		pr,
 		"--verify",
-		"grep -q fixed-1 app.txt",
+		'test -z "$GH_TOKEN" && test -z "$CUSTOM_SECRET" && echo temp > verify-side-effect.tmp && grep -q fixed-1 app.txt',
 	);
 	assert.equal(runRes.status, 0, runRes.stderr);
 	const result = JSON.parse(runRes.stdout);
@@ -349,6 +429,15 @@ test("mdw:review:fix が未解決スレッドを修正・検証・プッシュ�
 	const commitSha = result.iterations[0].commit_sha;
 	assert.match(commitSha, /^[0-9a-f]{40}$/);
 	assert.equal(f.runGit(f.remoteDir, "rev-parse", "feat/25-sample"), commitSha);
+	assert.equal(
+		f.runGit(f.repoDir, "show", "--pretty=format:", "--name-only", commitSha),
+		"app.txt",
+	);
+	assert.equal(
+		fs.existsSync(path.join(f.repoDir, "verify-side-effect.tmp")),
+		true,
+	);
+	fs.rmSync(path.join(f.repoDir, "verify-side-effect.tmp"));
 	const state = f.readState();
 	assert.equal(state.replies.length, 1);
 	assert.match(state.replies[0].body, new RegExp(commitSha.slice(0, 7)));
@@ -385,6 +474,7 @@ test("混在ケース（fixed + needs_human）と上限到達時に未解決ス�
 					body: "設計方針を選んでください",
 					createdAt: "2026-11-26T00:00:00Z",
 					url: `${pr}#discussion_r2`,
+					authorAssociation: "COLLABORATOR",
 					author: { login: "reviewer" },
 				},
 			],
@@ -415,7 +505,20 @@ test("混在ケース（fixed + needs_human）と上限到達時に未解決ス�
 		path: "app.txt",
 		line: 1,
 		originalLine: 1,
-		comments: { pageInfo: { hasNextPage: false }, nodes: [] },
+		comments: {
+			pageInfo: { hasNextPage: false },
+			nodes: [
+				{
+					id: "PRRC_new",
+					databaseId: 3,
+					body: "追加の指摘です",
+					createdAt: "2026-11-26T00:02:00Z",
+					url: `${pr}#discussion_r3`,
+					authorAssociation: "OWNER",
+					author: { login: "reviewer" },
+				},
+			],
+		},
 	};
 	f2.writeState(s2);
 	const maxRes = f2.run(
@@ -541,4 +644,210 @@ test("検証失敗・差分なし矛盾・プッシュ障害・事前ガード�
 		originRes.stderr,
 		/origin が指定された Pull Request のリポジトリと一致しません/,
 	);
+});
+
+test("信頼境界・範囲外変更・テスト変更時の検証停止・部分失敗復旧・ラベル付与失敗耐性を検証する", (t) => {
+	// 1. 権限外の投稿者や保護対象パスだけのスレッドは AI を呼ばず needs_human と mdw:wait にする
+	const fUntrusted = fixture(t);
+	const sUntrusted = fUntrusted.readState();
+	sUntrusted.threads[0].comments.nodes[0].authorAssociation = "NONE";
+	sUntrusted.threads.push({
+		id: "PRRT_CI",
+		isResolved: false,
+		isOutdated: false,
+		path: ".github/workflows/ci.yml",
+		line: 1,
+		originalLine: 1,
+		comments: {
+			pageInfo: { hasNextPage: false },
+			nodes: [
+				{
+					id: "PRRC_CI",
+					databaseId: 9,
+					body: "CI を書き換えてください",
+					createdAt: "2026-11-26T00:00:00Z",
+					url: `${pr}#discussion_r9`,
+					authorAssociation: "OWNER",
+					author: { login: "owner" },
+				},
+			],
+		},
+	});
+	fUntrusted.writeState(sUntrusted);
+	const untrustedRes = fUntrusted.run(
+		{},
+		"mise",
+		"run",
+		"mdw:review:fix",
+		"--pr",
+		pr,
+	);
+	assert.equal(untrustedRes.status, 0, untrustedRes.stderr);
+	const untrustedJson = JSON.parse(untrustedRes.stdout);
+	assert.equal(untrustedJson.status, "needs_human");
+	assert.equal(fUntrusted.readState().aiCalls, 0);
+	assert.deepEqual(
+		untrustedJson.skipped_threads.map((item) => [item.id, item.reason]),
+		[
+			["PRRT_1", "untrusted_author"],
+			["PRRT_CI", "protected_path"],
+		],
+	);
+	assert.deepEqual(fUntrusted.readState().labels, [
+		{ issue: 25, labels: ["mdw:wait"] },
+	]);
+
+	// 2. AI が対象スレッド外の新規ファイルを作成した場合は検証コマンド実行前に中断する
+	const fScope = fixture(t);
+	fScope.writeState({
+		...fScope.readState(),
+		aiScript: { mode: "out-of-scope-edit" },
+	});
+	const scopeRes = fScope.run(
+		{},
+		"mise",
+		"run",
+		"mdw:review:fix",
+		"--pr",
+		pr,
+		"--verify",
+		"echo SHOULD_NOT_RUN > ran.txt",
+	);
+	assert.equal(scopeRes.status, 1);
+	assert.match(scopeRes.stderr, /新規ファイルの追加（extra\.txt）/);
+	assert.equal(fs.existsSync(path.join(fScope.repoDir, "ran.txt")), false);
+	assert.deepEqual(fScope.readState().labels, [
+		{ issue: 25, labels: ["mdw:wait"] },
+	]);
+
+	// 3. テストファイルが変更された場合は --verify を自動実行せず人間へ引き渡す
+	const fTestEdit = fixture(t);
+	fs.mkdirSync(path.join(fTestEdit.repoDir, "tests"), { recursive: true });
+	fs.writeFileSync(
+		path.join(fTestEdit.repoDir, "tests/sample.test.mts"),
+		"before\n",
+	);
+	fTestEdit.runGit(fTestEdit.repoDir, "add", "tests/sample.test.mts");
+	fTestEdit.runGit(fTestEdit.repoDir, "commit", "-m", "add test file");
+	fTestEdit.runGit(fTestEdit.repoDir, "push", "origin", "feat/25-sample");
+	const sTestEdit = fTestEdit.readState();
+	sTestEdit.headSha = fTestEdit.runGit(fTestEdit.repoDir, "rev-parse", "HEAD");
+	sTestEdit.threads = [
+		{
+			id: "PRRT_TEST",
+			isResolved: false,
+			isOutdated: false,
+			path: "tests/sample.test.mts",
+			line: 1,
+			originalLine: 1,
+			comments: {
+				pageInfo: { hasNextPage: false },
+				nodes: [
+					{
+						id: "PRRC_TEST",
+						databaseId: 10,
+						body: "テストを更新してください",
+						createdAt: "2026-11-26T00:00:00Z",
+						url: `${pr}#discussion_r10`,
+						authorAssociation: "OWNER",
+						author: { login: "owner" },
+					},
+				],
+			},
+		},
+	];
+	sTestEdit.aiScript = { mode: "test-file-edit" };
+	fTestEdit.writeState(sTestEdit);
+	const testEditRes = fTestEdit.run(
+		{},
+		"mise",
+		"run",
+		"mdw:review:fix",
+		"--pr",
+		pr,
+		"--verify",
+		"echo SHOULD_NOT_RUN > ran-test.txt",
+	);
+	assert.equal(testEditRes.status, 1);
+	assert.match(
+		testEditRes.stderr,
+		/テスト・タスク・設定ファイルが変更されたため/,
+	);
+	assert.equal(
+		fs.existsSync(path.join(fTestEdit.repoDir, "ran-test.txt")),
+		false,
+	);
+	assert.deepEqual(fTestEdit.readState().labels, [
+		{ issue: 25, labels: ["mdw:wait"] },
+	]);
+
+	// 4. プッシュ後の返信で部分失敗しても、プッシュ済み SHA と失敗詳細・復旧コマンドを JSON 出力する
+	const fPartial = fixture(t);
+	const sPartial = fPartial.readState();
+	sPartial.threads.push({
+		id: "PRRT_2",
+		isResolved: false,
+		isOutdated: false,
+		path: "app.txt",
+		line: 1,
+		originalLine: 1,
+		comments: {
+			pageInfo: { hasNextPage: false },
+			nodes: [
+				{
+					id: "PRRC_2",
+					databaseId: 2,
+					body: "2件目の指摘",
+					createdAt: "2026-11-26T00:00:00Z",
+					url: `${pr}#discussion_r2`,
+					authorAssociation: "OWNER",
+					author: { login: "owner" },
+				},
+			],
+		},
+	});
+	sPartial.failReplyThreadId = "PRRT_2";
+	fPartial.writeState(sPartial);
+	const partialRes = fPartial.run(
+		{},
+		"mise",
+		"run",
+		"mdw:review:fix",
+		"--pr",
+		pr,
+	);
+	assert.equal(partialRes.status, 1);
+	const partialJson = JSON.parse(partialRes.stdout);
+	assert.equal(partialJson.status, "partial_failure");
+	assert.match(partialJson.iterations[0].commit_sha, /^[0-9a-f]{40}$/);
+	assert.equal(partialJson.iterations[0].replies.length, 1);
+	assert.equal(partialJson.iterations[0].failed_replies.length, 1);
+	assert.equal(partialJson.iterations[0].failed_replies[0].thread_id, "PRRT_2");
+	assert.match(
+		partialJson.iterations[0].failed_replies[0].recovery_command,
+		/mdw:review:reply .*--thread PRRT_2 --resolve/,
+	);
+	assert.deepEqual(partialJson.wait_label, { labeled: true, issue_number: 25 });
+
+	// 5. 終了時の mdw:wait ラベル付与が失敗しても完了済み結果 JSON を失わない
+	const fLabelFail = fixture(t);
+	const sLabelFail = fLabelFail.readState();
+	sLabelFail.threads[0].comments.nodes[0].authorAssociation = "NONE";
+	sLabelFail.failLabel = true;
+	fLabelFail.writeState(sLabelFail);
+	const labelFailRes = fLabelFail.run(
+		{},
+		"mise",
+		"run",
+		"mdw:review:fix",
+		"--pr",
+		pr,
+	);
+	assert.equal(labelFailRes.status, 0, labelFailRes.stderr);
+	const labelFailJson = JSON.parse(labelFailRes.stdout);
+	assert.equal(labelFailJson.status, "needs_human");
+	assert.equal(labelFailJson.wait_label.labeled, false);
+	assert.equal(labelFailJson.wait_label.issue_number, 25);
+	assert.ok(labelFailJson.wait_label.error);
+	assert.match(labelFailRes.stderr, /mdw:wait ラベル付与に失敗/);
 });

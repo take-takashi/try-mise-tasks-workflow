@@ -28,6 +28,7 @@ query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
               body
               createdAt
               url
+              authorAssociation
               author {
                 login
               }
@@ -116,6 +117,10 @@ export async function fetchReviewThreads(
 						id: comment.id,
 						database_id: comment.databaseId ?? null,
 						author: comment.author?.login ?? null,
+						author_association:
+							typeof comment.authorAssociation === "string"
+								? comment.authorAssociation
+								: "NONE",
 						body: comment.body ?? "",
 						created_at: comment.createdAt ?? null,
 						url: comment.url ?? null,

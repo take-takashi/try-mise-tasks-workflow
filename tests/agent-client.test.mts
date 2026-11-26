@@ -425,9 +425,27 @@ test("agy の設定検証、エフォート・課金扱い、環境分離、stdi
 	);
 });
 
-test("runWritableStructured は全プロバイダーで書き込み許可と最小権限・出力検証を揃える", async (t) => {
+test("runWritableStructured はシェル禁止可能なプロバイダーで最小権限を揃え codex を拒否する", async (t) => {
 	const root = executables(t);
-	for (const provider of ["codex", "claude", "agy"]) {
+	const codexClient = new AgentClient({
+		cwd: root,
+		workflow: "review",
+		environment: {
+			PATH: root,
+			MDW_REVIEW_FIX_PROVIDER: "codex",
+		},
+		run: async () => {
+			throw new Error("codex は起動されないはず");
+		},
+	});
+	await assert.rejects(
+		codexClient.runWritableStructured(codexClient.config("fix"), "fix prompt", {
+			type: "object",
+		}),
+		/シェル実行を禁止できないため codex は使用できません/,
+	);
+
+	for (const provider of ["claude", "agy"]) {
 		const calls = [];
 		const client = new AgentClient({
 			cwd: root,
@@ -438,13 +456,6 @@ test("runWritableStructured は全プロバイダーで書き込み許可と最�
 			},
 			run: async (args, options) => {
 				calls.push({ args, options });
-				if (provider === "codex") {
-					fs.writeFileSync(
-						args[args.indexOf("-o") + 1],
-						JSON.stringify({ ok: true }),
-					);
-					return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
-				}
 				if (provider === "agy") {
 					return {
 						stdout: Buffer.from(
@@ -477,9 +488,7 @@ test("runWritableStructured は全プロバイダーで書き込み許可と最�
 		assert.equal(calls.length, 1);
 		const { args, options } = calls[0];
 		assert.equal(options.input, "fix prompt");
-		if (provider === "codex") {
-			assert.equal(args[args.indexOf("--sandbox") + 1], "workspace-write");
-		} else if (provider === "claude") {
+		if (provider === "claude") {
 			assert.equal(args[args.indexOf("--permission-mode") + 1], "acceptEdits");
 			assert.equal(
 				args[args.indexOf("--tools") + 1],
@@ -490,12 +499,27 @@ test("runWritableStructured は全プロバイダーで書き込み許可と最�
 			assert.ok(args.includes("--disable-slash-commands"));
 			const settings = JSON.parse(args[args.indexOf("--settings") + 1]);
 			assert.deepEqual(settings.permissions.allow, [
-				"write_file(*)",
-				"read_file(*)",
+				`read_file(${root})`,
+				`write_file(${root})`,
 			]);
 			assert.ok(settings.permissions.deny.includes("command(*)"));
 			assert.ok(settings.permissions.deny.includes("read_url(*)"));
 			assert.ok(settings.permissions.deny.includes("mcp(*)"));
+			assert.ok(
+				settings.permissions.deny.includes(
+					`write_file(${path.join(root, ".git")})`,
+				),
+			);
+			assert.ok(
+				settings.permissions.deny.includes(
+					`write_file(${path.join(root, ".github")})`,
+				),
+			);
+			assert.ok(
+				settings.permissions.deny.includes(
+					`write_file(${path.join(root, ".mdw")})`,
+				),
+			);
 		}
 	}
 });

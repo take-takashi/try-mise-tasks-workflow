@@ -12,19 +12,28 @@ import { verifyOpenPullRequest } from "../_lib/github-pr.mts";
 import {
 	buildFixPrompt,
 	commitAndPushFixes,
-	escalateToWait,
 	fixPlanSchema,
-	hasWorkingTreeChanges,
+	listWorkingTreeChanges,
+	partitionThreadsForAutoFix,
 	reportThreadResults,
 	resolveLinkedIssueNumber,
 	resolveMaxIterations,
 	resolveVerifyCommand,
 	runVerificationCommand,
+	tryEscalateToWait,
+	validateChangedPaths,
 	validateFixPlan,
 	validateFixPrompt,
 	verifyLocalWorktreeMatchesPr,
 } from "../_lib/review-fix.mts";
 import { fetchReviewThreads } from "../_lib/review-threads.mts";
+
+function formatWaitNotice(wait) {
+	if (wait.labeled)
+		return `（Issue #${wait.issue_number} に mdw:wait を付与しました）`;
+	if (wait.error) return "（mdw:wait ラベルの付与にも失敗しました）";
+	return "";
+}
 
 export async function run({
 	pr,
@@ -59,11 +68,15 @@ export async function run({
 			pr: target.url,
 			status: "no_unresolved_threads",
 			issue_number: linkedIssue,
+			skipped_threads: [],
 			iterations: [],
 			remaining_threads: 0,
 			wait_label: { labeled: false, issue_number: linkedIssue },
 		};
 	}
+
+	// 投稿者権限と保護対象パスを確認し、自動修正できるスレッドと人間の確認待ちに分ける。
+	let { fixableThreads, skippedThreads } = partitionThreadsForAutoFix(threads);
 
 	// --dry-run の場合は AI 実行・変更・外部書き込みを行わずに計画を返す。
 	if (dryRun) {
@@ -76,39 +89,57 @@ export async function run({
 			issue_number: linkedIssue,
 			verify_command: verifyCommand,
 			max_iterations: maxIterations,
-			unresolved_threads: threads.map((thread) => ({
+			unresolved_threads: fixableThreads.map((thread) => ({
 				id: thread.id,
 				path: thread.path,
 				line: thread.line,
 				is_outdated: thread.is_outdated,
 			})),
+			skipped_threads: skippedThreads,
 		};
 	}
 
-	// 修正に使う AI CLI の設定と認証を事前に確認する。
+	// 自動修正対象が 0 件（信頼できない投稿者や保護対象パスのみ）の場合は AI を呼ばずに人間へ引き渡す。
+	if (!fixableThreads.length) {
+		const waitLabel = await tryEscalateToWait(target, linkedIssue);
+		return {
+			pr: target.url,
+			status: "needs_human",
+			issue_number: linkedIssue,
+			skipped_threads: skippedThreads,
+			iterations: [],
+			remaining_threads: threads.length,
+			wait_label: waitLabel,
+		};
+	}
+
+	// 修正に使う AI CLI がシェル禁止の書き込み実行に対応していることと認証を事前に確認する。
 	const agent = new AgentClient({ cwd: worktree.root });
-	await agent.check(["fix"], { log: console.error });
 	const settings = agent.config("fix");
+	agent.assertWritableProvider(settings);
+	await agent.check(["fix"], { log: console.error });
 
 	const iterations = [];
 	let needsHumanEscalation = false;
+	let partialFailure = false;
 
 	for (let step = 1; step <= maxIterations; step++) {
 		// 静的ルールを先頭にしたプロンプトで AI に修正と結果 JSON の生成を依頼する。
-		const prompt = buildFixPrompt(target, threads);
+		const prompt = buildFixPrompt(target, fixableThreads);
 		const { data } = await agent.runWritableStructured(
 			settings,
 			prompt,
 			fixPlanSchema,
 		);
-		const plan = validateFixPlan(data, threads);
+		const plan = validateFixPlan(data, fixableThreads);
 
 		// AI の報告と作業ツリーの差分有無に矛盾がないか確認する。
 		const fixedItems = plan.results.filter((item) => item.status === "fixed");
 		const needsHumanItems = plan.results.filter(
 			(item) => item.status === "needs_human",
 		);
-		const changed = await hasWorkingTreeChanges(worktree.root);
+		const changes = await listWorkingTreeChanges(worktree.root);
+		const changed = changes.entries.length > 0;
 		if (fixedItems.length > 0 && !changed) {
 			throw new Error(
 				"AI が修正済みと報告しましたが、作業ツリーに変更がありません。",
@@ -120,44 +151,70 @@ export async function run({
 			);
 		}
 
-		// 修正がある場合は検証コマンドを実行し、失敗時はコミット・プッシュ・resolve せずに中断する。
+		// 修正がある場合は検証コマンド実行前に変更パスの許可範囲を確認し、検証・コミット・プッシュを行う。
 		let verification = { skipped: true, ok: true, code: 0 };
 		let commitSha = null;
+		let stagedPaths = [];
 		if (fixedItems.length > 0) {
+			const fixedIds = new Set(fixedItems.map((item) => item.thread_id));
+			const allowedPaths = new Set(
+				fixableThreads
+					.filter((thread) => fixedIds.has(thread.id))
+					.map((thread) => thread.path)
+					.filter(Boolean),
+			);
+			let validated: ReturnType<typeof validateChangedPaths>;
+			try {
+				validated = validateChangedPaths(changes, allowedPaths, worktree.root);
+			} catch (error) {
+				const wait = await tryEscalateToWait(target, linkedIssue);
+				throw new Error(`${error.message}${formatWaitNotice(wait)}`);
+			}
+			stagedPaths = validated.paths;
+			if (verifyCommand && validated.touchesVerificationCode) {
+				const wait = await tryEscalateToWait(target, linkedIssue);
+				throw new Error(
+					`テスト・タスク・設定ファイルが変更されたため、自動検証を実行せず中断しました。人間が確認して検証してください${formatWaitNotice(wait)}。`,
+				);
+			}
 			verification = await runVerificationCommand(verifyCommand, {
 				cwd: worktree.root,
 			});
 			if (!verification.ok) {
-				let waitNotice = "";
-				try {
-					const wait = await escalateToWait(target, linkedIssue);
-					if (wait.labeled)
-						waitNotice = `（Issue #${wait.issue_number} に mdw:wait を付与しました）`;
-				} catch {
-					waitNotice = "（mdw:wait ラベルの付与にも失敗しました）";
-				}
+				const wait = await tryEscalateToWait(target, linkedIssue);
 				throw new Error(
-					`検証コマンドが終了コード ${verification.code} で失敗したため、コミット・プッシュ・resolve を中断しました${waitNotice}。`,
+					`検証コマンドが終了コード ${verification.code} で失敗したため、コミット・プッシュ・resolve を中断しました${formatWaitNotice(wait)}。`,
 				);
 			}
-			// 検証に通過した修正をコミットして対象 PR ブランチへプッシュする。
+			// 検証に通過した許可対象パスだけをステージ・コミットし、対象 PR ブランチへプッシュする。
 			commitSha = await commitAndPushFixes({
 				cwd: worktree.root,
 				headRef: target.headRef,
 				commitMessage: plan.commitMessage,
+				paths: stagedPaths,
 			});
 		}
 
-		// プッシュ完了後に、修正済みスレッドへ返信＆resolve、判断不能スレッドへ保留理由を返信する。
-		const replies = await reportThreadResults(target, plan, { commitSha });
+		// プッシュ完了後に、各スレッドへ個別に返信＆resolve を実行し、部分失敗時も状態を保持する。
+		const { replies, failed } = await reportThreadResults(target, plan, {
+			commitSha,
+		});
 		iterations.push({
 			iteration: step,
 			commit_sha: commitSha,
+			staged_paths: stagedPaths,
 			verification,
 			fixed_count: fixedItems.length,
 			needs_human_count: needsHumanItems.length,
 			replies,
+			failed_replies: failed,
 		});
+
+		// 返信や resolve で部分失敗した場合はプッシュ済み SHA と失敗詳細を残して反復を打ち切る。
+		if (failed.length > 0) {
+			partialFailure = true;
+			break;
+		}
 
 		// 判断不能スレッドが残っている場合は反復を打ち切り、人間へ引き渡す。
 		if (needsHumanItems.length > 0) {
@@ -170,30 +227,47 @@ export async function run({
 		({ threads } = await fetchReviewThreads(target, {
 			includeResolved: false,
 		}));
-		if (!threads.length) break;
+		({ fixableThreads, skippedThreads } = partitionThreadsForAutoFix(threads));
+		if (!fixableThreads.length) break;
 		if (step < maxIterations) {
 			await verifyLocalWorktreeMatchesPr(target, { cwd: worktree.root });
 		}
 	}
 
-	// 判断不能スレッドが残った、または上限回数後も未解決スレッドが残っている場合は mdw:wait を付与する。
-	const remaining = needsHumanEscalation
-		? (await fetchReviewThreads(target, { includeResolved: false })).threads
-				.length
-		: threads.length;
-	const shouldWait = needsHumanEscalation || remaining > 0;
+	// 未解決スレッド数を確認し、部分失敗・判断不能・対象外スレッド・上限到達時は mdw:wait を付与する。
+	let remaining = threads.length;
+	if (partialFailure || needsHumanEscalation) {
+		try {
+			remaining = (await fetchReviewThreads(target, { includeResolved: false }))
+				.threads.length;
+		} catch {
+			const last = iterations[iterations.length - 1];
+			remaining = (last?.failed_replies?.length ?? 0) + skippedThreads.length;
+		}
+	}
+	const shouldWait =
+		partialFailure ||
+		needsHumanEscalation ||
+		skippedThreads.length > 0 ||
+		remaining > 0;
 	const waitLabel = shouldWait
-		? await escalateToWait(target, linkedIssue)
+		? await tryEscalateToWait(target, linkedIssue)
 		: { labeled: false, issue_number: linkedIssue };
 
-	return {
-		pr: target.url,
-		status: needsHumanEscalation
+	const status = partialFailure
+		? "partial_failure"
+		: needsHumanEscalation ||
+				(skippedThreads.length > 0 && !fixableThreads.length)
 			? "needs_human"
 			: remaining > 0
 				? "max_iterations_reached"
-				: "completed",
+				: "completed";
+
+	return {
+		pr: target.url,
+		status,
 		issue_number: linkedIssue,
+		skipped_threads: skippedThreads,
 		iterations,
 		remaining_threads: remaining,
 		wait_label: waitLabel,
@@ -213,6 +287,9 @@ if (import.meta.main) {
 				dryRun: process.env.usage_dry_run === "true",
 			});
 			console.log(JSON.stringify(result, null, 2));
+			if (result.status === "partial_failure") {
+				process.exitCode = 1;
+			}
 		},
 		{
 			usage: [

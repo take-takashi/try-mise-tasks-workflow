@@ -12,6 +12,38 @@ const defaultPromptDir = fileURLToPath(
 );
 const maxAllowedIterations = 5;
 const validStatuses = ["fixed", "needs_human"];
+const trustedAuthorAssociations = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
+const protectedTopLevelDirs = new Set([".git", ".github", ".mdw"]);
+const verificationTopLevelDirs = new Set(["tests", "test", ".mise", "scripts"]);
+const verificationConfigFiles = new Set([
+	"package.json",
+	"package-lock.json",
+	"pnpm-lock.yaml",
+	"yarn.lock",
+	"biome.json",
+	"biome.jsonc",
+	"tsconfig.json",
+]);
+const secretEnvPattern =
+	/(?:^|_)(?:TOKEN|SECRET|API_KEY|PASSWORD|CREDENTIAL)(?:$|_)/i;
+const explicitSecretEnvKeys = new Set([
+	"GH_TOKEN",
+	"GITHUB_TOKEN",
+	"OPENAI_API_KEY",
+	"CODEX_API_KEY",
+	"ANTHROPIC_API_KEY",
+	"ANTHROPIC_AUTH_TOKEN",
+	"MDW_ANTHROPIC_API_KEY",
+	"AWF_ANTHROPIC_API_KEY",
+	"REVIEW_ANTHROPIC_API_KEY",
+	"GEMINI_API_KEY",
+	"GOOGLE_API_KEY",
+	"AWS_ACCESS_KEY_ID",
+	"AWS_SECRET_ACCESS_KEY",
+	"AWS_SESSION_TOKEN",
+	"NPM_TOKEN",
+	"NODE_AUTH_TOKEN",
+]);
 
 function hasControlChar(value) {
 	for (let index = 0; index < value.length; index++) {
@@ -118,6 +150,81 @@ export function parseGithubRepoFromRemote(remoteUrl) {
 		}
 	}
 	return null;
+}
+
+export function isProtectedPath(filePath) {
+	if (
+		typeof filePath !== "string" ||
+		!filePath ||
+		filePath.startsWith("/") ||
+		filePath.includes("\\") ||
+		hasControlChar(filePath)
+	) {
+		return true;
+	}
+	const segments = filePath.split("/");
+	if (segments.some((part) => !part || part === "." || part === "..")) {
+		return true;
+	}
+	if (protectedTopLevelDirs.has(segments[0])) return true;
+	if (segments.includes(".git")) return true;
+	const base = segments[segments.length - 1].toLowerCase();
+	if (
+		base === "mise.toml" ||
+		base === ".mise.toml" ||
+		/^mise\..+\.toml$/.test(base) ||
+		/^\.env(?:\..+)?$/.test(base)
+	) {
+		return true;
+	}
+	return false;
+}
+
+export function isVerificationExecutablePath(filePath) {
+	if (typeof filePath !== "string" || !filePath) return true;
+	const segments = filePath.split("/");
+	if (verificationTopLevelDirs.has(segments[0])) return true;
+	const base = segments[segments.length - 1].toLowerCase();
+	if (verificationConfigFiles.has(base)) return true;
+	return false;
+}
+
+export function partitionThreadsForAutoFix(threads) {
+	const fixableThreads = [];
+	const skippedThreads = [];
+	for (const thread of threads) {
+		const comments = Array.isArray(thread.comments) ? thread.comments : [];
+		const allTrusted =
+			!thread.comments_truncated &&
+			comments.length > 0 &&
+			comments.every((comment) =>
+				trustedAuthorAssociations.has(comment.author_association),
+			);
+		if (!allTrusted) {
+			skippedThreads.push({
+				id: thread.id,
+				path: thread.path ?? null,
+				line: thread.line ?? null,
+				reason: "untrusted_author",
+			});
+			continue;
+		}
+		if (
+			typeof thread.path !== "string" ||
+			!thread.path.trim() ||
+			isProtectedPath(thread.path)
+		) {
+			skippedThreads.push({
+				id: thread.id,
+				path: thread.path ?? null,
+				line: thread.line ?? null,
+				reason: "protected_path",
+			});
+			continue;
+		}
+		fixableThreads.push(thread);
+	}
+	return { fixableThreads, skippedThreads };
 }
 
 export function validateFixPrompt({ promptDir = defaultPromptDir } = {}) {
@@ -283,12 +390,95 @@ export function validateFixPlan(data, threads) {
 	return { commitMessage, results: ordered };
 }
 
-export async function hasWorkingTreeChanges(cwd) {
-	const { stdout } = await runCommand(["git", "status", "--porcelain"], {
-		cwd,
-		timeout: 30,
-	});
-	return Boolean(stdout.toString("utf8").trim());
+export async function listWorkingTreeChanges(cwd) {
+	const { stdout } = await runCommand(
+		["git", "status", "--porcelain", "-z", "-uall"],
+		{
+			cwd,
+			timeout: 30,
+		},
+	);
+	const raw = stdout.toString("utf8");
+	if (!raw) return { entries: [], paths: [] };
+	const tokens = raw.split("\0");
+	if (tokens[tokens.length - 1] === "") tokens.pop();
+	const entries = [];
+	const seen = new Set();
+	for (let index = 0; index < tokens.length; index++) {
+		const token = tokens[index];
+		if (token.length < 4 || token[2] !== " ") {
+			throw new Error("git status の出力を解析できません。");
+		}
+		const status = token.slice(0, 2);
+		const filePath = token.slice(3);
+		let originalPath = null;
+		if (
+			status[0] === "R" ||
+			status[1] === "R" ||
+			status[0] === "C" ||
+			status[1] === "C"
+		) {
+			originalPath = tokens[++index] ?? null;
+		}
+		entries.push({ status, path: filePath, originalPath });
+		seen.add(filePath);
+		if (originalPath) seen.add(originalPath);
+	}
+	return { entries, paths: [...seen] };
+}
+
+export function validateChangedPaths(changes, allowedPaths, cwd) {
+	const validated = [];
+	const seen = new Set();
+	for (const entry of changes.entries) {
+		if (entry.status === "??") {
+			throw new Error(
+				`新規ファイルの追加（${entry.path}）は自動修正では許可されていません。`,
+			);
+		}
+		const involved = entry.originalPath
+			? [entry.path, entry.originalPath]
+			: [entry.path];
+		for (const filePath of involved) {
+			if (isProtectedPath(filePath)) {
+				throw new Error(
+					`保護対象ファイル（${filePath}）の変更は自動修正では許可されていません。`,
+				);
+			}
+			if (!allowedPaths.has(filePath)) {
+				throw new Error(
+					`対象スレッド外のファイル（${filePath}）が変更されたため中断しました。`,
+				);
+			}
+			const absolute = path.join(cwd, filePath);
+			try {
+				if (fs.lstatSync(absolute).isSymbolicLink()) {
+					throw new Error(
+						`シンボリックリンク（${filePath}）の変更は自動修正では許可されていません。`,
+					);
+				}
+			} catch (error) {
+				if (error?.code !== "ENOENT") throw error;
+			}
+			if (!seen.has(filePath)) {
+				seen.add(filePath);
+				validated.push(filePath);
+			}
+		}
+	}
+	return {
+		paths: validated,
+		touchesVerificationCode: validated.some(isVerificationExecutablePath),
+	};
+}
+
+export function verificationEnvironment(environment = process.env) {
+	const sanitized = {};
+	for (const [key, value] of Object.entries(environment)) {
+		if (explicitSecretEnvKeys.has(key) || secretEnvPattern.test(key)) continue;
+		sanitized[key] = value;
+	}
+	return sanitized;
 }
 
 export async function runVerificationCommand(
@@ -299,7 +489,7 @@ export async function runVerificationCommand(
 	const timeout = timeoutSeconds(env);
 	const { code, signal } = await runCommand(["sh", "-c", verifyCommand], {
 		cwd,
-		env,
+		env: verificationEnvironment(env),
 		timeout,
 		allowNonZero: true,
 	});
@@ -310,18 +500,32 @@ export async function runVerificationCommand(
 	};
 }
 
-export async function commitAndPushFixes({ cwd, headRef, commitMessage }) {
-	await runCommand(["git", "add", "-A"], { cwd, timeout: 30 });
-	const staged = (
-		await runCommand(["git", "diff", "--cached", "--name-only"], {
+export async function commitAndPushFixes({
+	cwd,
+	headRef,
+	commitMessage,
+	paths,
+}) {
+	if (!Array.isArray(paths) || paths.length === 0) {
+		throw new Error("ステージ対象のファイルパスがありません。");
+	}
+	const allowed = new Set(paths);
+	await runCommand(["git", "add", "--", ...paths], { cwd, timeout: 30 });
+	const stagedRaw = (
+		await runCommand(["git", "diff", "--cached", "--name-only", "-z"], {
 			cwd,
 			timeout: 30,
 		})
-	).stdout
-		.toString("utf8")
-		.trim();
-	if (!staged) {
+	).stdout.toString("utf8");
+	const staged = stagedRaw.split("\0").filter(Boolean);
+	if (!staged.length) {
 		throw new Error("コミット対象の差分がありません。");
+	}
+	const unexpected = staged.filter((filePath) => !allowed.has(filePath));
+	if (unexpected.length) {
+		throw new Error(
+			`許可範囲外のファイルがステージされました: ${unexpected.join(", ")}`,
+		);
 	}
 	await runCommand(["git", "commit", "--file=-"], {
 		cwd,
@@ -351,41 +555,68 @@ export async function commitAndPushFixes({ cwd, headRef, commitMessage }) {
 
 export async function reportThreadResults(target, plan, { commitSha }) {
 	const replies = [];
+	const failed = [];
 	const shortSha = commitSha ? commitSha.slice(0, 7) : null;
 	for (const item of plan.results) {
-		if (item.status === "fixed") {
-			if (!shortSha)
-				throw new Error("修正コミット SHA が未確定のため resolve できません。");
-			const body = [
-				`コミット \`${shortSha}\` で修正しました。`,
-				"",
-				asPlainText(item.summary),
-			].join("\n");
+		const isFixed = item.status === "fixed";
+		if (isFixed && !shortSha) {
+			throw new Error("修正コミット SHA が未確定のため resolve できません。");
+		}
+		const body = isFixed
+			? [
+					`コミット \`${shortSha}\` で修正しました。`,
+					"",
+					asPlainText(item.summary),
+				].join("\n")
+			: [
+					"自動修正を保留しました（人間の確認待ち）。",
+					"",
+					asPlainText(item.summary),
+				].join("\n");
+		try {
 			const result = await replyToReviewThread(target, {
 				threadId: item.thread_id,
 				body,
-				resolve: true,
+				resolve: isFixed,
 			});
-			replies.push({ ...result, status: "fixed" });
-		} else {
-			const body = [
-				"自動修正を保留しました（人間の確認待ち）。",
-				"",
-				asPlainText(item.summary),
-			].join("\n");
-			const result = await replyToReviewThread(target, {
-				threadId: item.thread_id,
-				body,
-				resolve: false,
+			replies.push({ ...result, status: item.status, ok: true });
+		} catch (error) {
+			failed.push({
+				thread_id: item.thread_id,
+				status: item.status,
+				ok: false,
+				error: error.message,
+				recovery_command: isFixed
+					? `mise run mdw:review:reply --pr ${target.url} --thread ${item.thread_id} --resolve --body "コミット ${shortSha} で修正しました。"`
+					: `mise run mdw:review:reply --pr ${target.url} --thread ${item.thread_id} --body "自動修正を保留しました。"`,
 			});
-			replies.push({ ...result, status: "needs_human" });
 		}
 	}
-	return replies;
+	return { replies, failed };
 }
 
 export async function escalateToWait(target, issueNumber) {
 	if (!issueNumber) return { labeled: false, issue_number: null };
 	await addIssueLabels(target, issueNumber, ["mdw:wait"]);
 	return { labeled: true, issue_number: issueNumber };
+}
+
+export async function tryEscalateToWait(
+	target,
+	issueNumber,
+	{ warn = console.error } = {},
+) {
+	if (!issueNumber) return { labeled: false, issue_number: null };
+	try {
+		return await escalateToWait(target, issueNumber);
+	} catch (error) {
+		warn(
+			`警告: Issue #${issueNumber} への mdw:wait ラベル付与に失敗しました: ${error.message}`,
+		);
+		return {
+			labeled: false,
+			issue_number: issueNumber,
+			error: error.message,
+		};
+	}
 }
