@@ -424,3 +424,78 @@ test("agy の設定検証、エフォート・課金扱い、環境分離、stdi
 		/ツール使用が拒否されたため、構造化出力を取得できませんでした/,
 	);
 });
+
+test("runWritableStructured は全プロバイダーで書き込み許可と最小権限・出力検証を揃える", async (t) => {
+	const root = executables(t);
+	for (const provider of ["codex", "claude", "agy"]) {
+		const calls = [];
+		const client = new AgentClient({
+			cwd: root,
+			workflow: "review",
+			environment: {
+				PATH: root,
+				MDW_REVIEW_FIX_PROVIDER: provider,
+			},
+			run: async (args, options) => {
+				calls.push({ args, options });
+				if (provider === "codex") {
+					fs.writeFileSync(
+						args[args.indexOf("-o") + 1],
+						JSON.stringify({ ok: true }),
+					);
+					return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+				}
+				if (provider === "agy") {
+					return {
+						stdout: Buffer.from(
+							JSON.stringify({
+								status: "SUCCESS",
+								structured_output: { ok: true },
+								denied_actions: [],
+							}),
+						),
+						stderr: Buffer.alloc(0),
+					};
+				}
+				return {
+					stdout: Buffer.from(
+						JSON.stringify({
+							structured_output: { ok: true },
+							permission_denials: [],
+						}),
+					),
+					stderr: Buffer.alloc(0),
+				};
+			},
+		});
+		const result = await client.runWritableStructured(
+			client.config("fix"),
+			"fix prompt",
+			{ type: "object" },
+		);
+		assert.deepEqual(result, { data: { ok: true }, permissionDenials: 0 });
+		assert.equal(calls.length, 1);
+		const { args, options } = calls[0];
+		assert.equal(options.input, "fix prompt");
+		if (provider === "codex") {
+			assert.equal(args[args.indexOf("--sandbox") + 1], "workspace-write");
+		} else if (provider === "claude") {
+			assert.equal(args[args.indexOf("--permission-mode") + 1], "acceptEdits");
+			assert.equal(
+				args[args.indexOf("--tools") + 1],
+				"Read,Grep,Glob,Edit,Write",
+			);
+		} else {
+			assert.ok(args.includes("--sandbox"));
+			assert.ok(args.includes("--disable-slash-commands"));
+			const settings = JSON.parse(args[args.indexOf("--settings") + 1]);
+			assert.deepEqual(settings.permissions.allow, [
+				"write_file(*)",
+				"read_file(*)",
+			]);
+			assert.ok(settings.permissions.deny.includes("command(*)"));
+			assert.ok(settings.permissions.deny.includes("read_url(*)"));
+			assert.ok(settings.permissions.deny.includes("mcp(*)"));
+		}
+	}
+});

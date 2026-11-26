@@ -119,6 +119,18 @@ function agyReadOnlySettings(tools) {
 	});
 }
 
+function agyWritableSettings() {
+	return JSON.stringify({
+		agentMode: "",
+		enableTerminalSandbox: true,
+		toolPermission: "request-review",
+		permissions: {
+			allow: ["write_file(*)", "read_file(*)"],
+			deny: ["command(*)", "read_url(*)", "execute_url(*)", "mcp(*)"],
+		},
+	});
+}
+
 function config(workflow, role, env, cwd) {
 	const setting = (field, fallback) =>
 		resolveSetting(workflow, role, field, fallback, env);
@@ -329,11 +341,11 @@ export class AgentClient {
 		);
 	}
 
-	async runStructured(
+	async #executeStructured(
 		settings,
 		prompt,
 		schema,
-		{ tools = "Read,Grep,Glob,Bash" } = {},
+		{ codexSandbox, claudeTools, claudePermissionMode, agySettings, agyInput },
 	) {
 		const { provider, model, effort, billing, executable } = settings;
 		const env = childEnvironment(provider, billing, this.#environment);
@@ -356,7 +368,7 @@ export class AgentClient {
 						"-c",
 						"model_reasoning_effort=" + JSON.stringify(effort),
 						"--sandbox",
-						"read-only",
+						codexSandbox,
 						"--ephemeral",
 						...(model ? ["--model", model] : []),
 						"--output-schema",
@@ -380,9 +392,9 @@ export class AgentClient {
 					"--effort",
 					effort,
 					"--tools",
-					tools,
+					claudeTools,
 					"--permission-mode",
-					"plan",
+					claudePermissionMode,
 					"--strict-mcp-config",
 					"--no-chrome",
 					"--no-session-persistence",
@@ -416,7 +428,7 @@ export class AgentClient {
 					"--sandbox",
 					"--disable-slash-commands",
 					"--settings",
-					agyReadOnlySettings(tools),
+					agySettings,
 					"--output-format",
 					"json",
 					"--json-schema",
@@ -429,7 +441,7 @@ export class AgentClient {
 				{
 					cwd: this.cwd,
 					env,
-					input: agyStructuredPrompt(prompt, tools),
+					input: agyInput,
 					timeout,
 				},
 			);
@@ -460,6 +472,31 @@ export class AgentClient {
 			permissionDenials = envelope.denied_actions?.length ?? 0;
 		}
 		return { data, permissionDenials };
+	}
+
+	async runStructured(
+		settings,
+		prompt,
+		schema,
+		{ tools = "Read,Grep,Glob,Bash" } = {},
+	) {
+		return await this.#executeStructured(settings, prompt, schema, {
+			codexSandbox: "read-only",
+			claudeTools: tools,
+			claudePermissionMode: "plan",
+			agySettings: agyReadOnlySettings(tools),
+			agyInput: agyStructuredPrompt(prompt, tools),
+		});
+	}
+
+	async runWritableStructured(settings, prompt, schema) {
+		return await this.#executeStructured(settings, prompt, schema, {
+			codexSandbox: "workspace-write",
+			claudeTools: "Read,Grep,Glob,Edit,Write",
+			claudePermissionMode: "acceptEdits",
+			agySettings: agyWritableSettings(),
+			agyInput: prompt,
+		});
 	}
 }
 

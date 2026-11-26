@@ -102,11 +102,14 @@ mise run mdw:review:post --dry-run
 mise run mdw:review:post --pr https://github.com/OWNER/REPO/pull/123
 mise run mdw:review:threads --pr https://github.com/OWNER/REPO/pull/123
 mise run mdw:review:reply --pr https://github.com/OWNER/REPO/pull/123 --thread <THREAD_ID> --body "修正しました" --resolve
+mise run mdw:review:fix --pr https://github.com/OWNER/REPO/pull/123 --verify "mise run check && mise exec -- node --test tests/*.test.mts"
 ```
 
 投稿・スレッド操作タスクには、対象リポジトリで PR を操作できる認証済みの `gh` が必要です。`mdw:review:post` は PR のベースとヘッドが評価時のコミットに一致することを確認し、採用した指摘のうち対象差分のハンク内に含まれるものは該当行へのインラインコメントとして、diff 範囲外のものはレビュー本文へフォールバックして投稿します。同じ本文・同じインラインコメントを同じコミットに投稿済みの場合は、そのレビューの URL を返します。ベースかヘッドが変わった場合は、PR の現在のコミットを指定してレビューと評価をやり直してください。
 
 `mdw:review:threads` は指定したオープンな PR の未解決レビュースレッド（`--all` で解決済みも含む）を GraphQL ページネーションで JSON 出力します。`mdw:review:reply` は指定したスレッド ID が対象 PR に属することを確認したうえで `--body` または `--body-file`（作業ディレクトリ配下の 64 KiB 以下の通常ファイルのみ許可し、シンボリックリンクや外部パスは拒否）の内容をインライン返信し、`--resolve` 指定時のみ未解決スレッドを resolve します（末尾コメントが同一内容なら重複返信を抑止し、`--resolve` 単独での再実行や `--dry-run` 検証にも対応します）。
+
+`mdw:review:fix` は対象 PR・ローカル worktree・ブランチ・HEAD・`origin` リモートの一致を確認したうえで未解決スレッドを取得し、`AgentClient`（設定は `MDW_REVIEW_FIX_*` → `MDW_REVIEW_*` → `MDW_DEFAULT_*`、プロンプトは `.mise/tasks/mdw/prompts/review/fix.md`）による修正、`--verify`（または `MDW_REVIEW_FIX_VERIFY`）による検証、コミット＆プッシュ、各スレッドへのインライン返信と（修正分のみ）resolve を最大 `--max-iterations` 回（1〜5、既定 1）自律実行します。AI の書き込み実行ではシェルや外部アクセスを制限し、検証・コミット・プッシュ・返信・resolve はワークフロー側が決定論的に実行します。検証失敗・判断不能（`needs_human`）・上限到達時は無理に resolve せず、理由を返信して未解決のまま残し、`--issue` または PR 本文（`Closes #123` 等）・ブランチ名から特定した Issue へ `mdw:wait` ラベルを付与します（`--dry-run` で変更や外部書き込みを行わず計画確認できます）。
 
 ## プロバイダーとモデルの設定
 
