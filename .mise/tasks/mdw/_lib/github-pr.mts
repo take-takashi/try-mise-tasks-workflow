@@ -166,10 +166,31 @@ export async function verifyOpenPullRequest(
 	return {
 		...parsed,
 		pr,
+		body: typeof pr.body === "string" ? pr.body : "",
 		baseSha: pr.base?.sha ?? null,
 		headSha: pr.head.sha,
 		headRef: pr.head?.ref ?? null,
 	};
+}
+
+export async function addIssueLabels(target, issueNumber, labels) {
+	if (!Number.isSafeInteger(issueNumber) || issueNumber < 1) {
+		throw new Error("ラベル付与先の Issue 番号が不正です。");
+	}
+	const normalized = Array.isArray(labels)
+		? labels
+				.filter((label) => typeof label === "string")
+				.map((label) => label.trim())
+				.filter(Boolean)
+		: [];
+	if (!normalized.length) {
+		throw new Error("付与するラベルを 1 件以上指定してください。");
+	}
+	return await githubApi(
+		`repos/${target.owner}/${target.repo}/issues/${issueNumber}/labels`,
+		["--method", "POST", "--input", "-"],
+		JSON.stringify({ labels: normalized }),
+	);
 }
 
 // AI の文章はコードブロックに入れ、メンションや Markdown として解釈されないようにする。

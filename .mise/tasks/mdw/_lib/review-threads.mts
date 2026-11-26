@@ -28,6 +28,7 @@ query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
               body
               createdAt
               url
+              authorAssociation
               author {
                 login
               }
@@ -116,6 +117,10 @@ export async function fetchReviewThreads(
 						id: comment.id,
 						database_id: comment.databaseId ?? null,
 						author: comment.author?.login ?? null,
+						author_association:
+							typeof comment.authorAssociation === "string"
+								? comment.authorAssociation
+								: "NONE",
 						body: comment.body ?? "",
 						created_at: comment.createdAt ?? null,
 						url: comment.url ?? null,
@@ -302,13 +307,27 @@ export async function replyToReviewThread(
 		const suffix = commentUrl
 			? `スレッドへの返信（${commentUrl}）は完了しましたが、`
 			: "";
-		throw new Error(`${suffix}resolve に失敗しました: ${error.message}`);
+		const wrapped = new Error(
+			`${suffix}resolve に失敗しました: ${error.message}`,
+		) as Error & { replied?: boolean; commentUrl?: string | null };
+		if (commentId || alreadyReplied) {
+			wrapped.replied = true;
+			wrapped.commentUrl = commentUrl;
+		}
+		throw wrapped;
 	}
 	if (!resolveData?.resolveReviewThread?.thread?.isResolved) {
 		const suffix = commentUrl
 			? `スレッドへの返信（${commentUrl}）は完了しましたが、`
 			: "";
-		throw new Error(`${suffix}resolve 状態を確認できませんでした。`);
+		const wrapped = new Error(
+			`${suffix}resolve 状態を確認できませんでした。`,
+		) as Error & { replied?: boolean; commentUrl?: string | null };
+		if (commentId || alreadyReplied) {
+			wrapped.replied = true;
+			wrapped.commentUrl = commentUrl;
+		}
+		throw wrapped;
 	}
 	return {
 		pr: target.url,

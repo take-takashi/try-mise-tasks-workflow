@@ -1,6 +1,28 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 
+const activeProcessGroups = new Set<number>();
+let signalHandlersInstalled = false;
+
+function killActiveProcessGroups(signal: NodeJS.Signals) {
+	for (const pid of activeProcessGroups) {
+		try {
+			process.kill(-pid, signal);
+		} catch {}
+	}
+}
+
+function ensureSignalHandlers() {
+	if (signalHandlersInstalled) return;
+	signalHandlersInstalled = true;
+	for (const sig of ["SIGINT", "SIGTERM"] as const) {
+		process.on(sig, () => {
+			killActiveProcessGroups(sig);
+			process.exit(sig === "SIGINT" ? 130 : 143);
+		});
+	}
+}
+
 export function runCommand(
 	command,
 	{
@@ -13,23 +35,36 @@ export function runCommand(
 ) {
 	return new Promise((resolve, reject) => {
 		let child: ReturnType<typeof spawn>;
+		const useProcessGroup = process.platform !== "win32";
+		if (useProcessGroup) ensureSignalHandlers();
 		try {
 			child = spawn(command[0], command.slice(1), {
 				cwd,
 				env,
 				shell: false,
+				detached: useProcessGroup,
 				stdio: ["pipe", "pipe", "pipe"],
 			});
 		} catch (error) {
 			reject(new Error(command[0] + " の実行に失敗しました: " + error.name));
 			return;
 		}
+		if (useProcessGroup && child.pid) activeProcessGroups.add(child.pid);
+		const unregister = () => {
+			if (useProcessGroup && child.pid) activeProcessGroups.delete(child.pid);
+		};
 		const stdout = [],
 			stderr = [];
 		let timedOut = false,
 			finished = false;
 		const timer = setTimeout(() => {
 			timedOut = true;
+			if (useProcessGroup && child.pid) {
+				try {
+					process.kill(-child.pid, "SIGKILL");
+					return;
+				} catch {}
+			}
 			child.kill("SIGKILL");
 		}, timeout * 1000);
 		child.stdout.on("data", (chunk) => stdout.push(chunk));
@@ -39,12 +74,14 @@ export function runCommand(
 			if (finished) return;
 			finished = true;
 			clearTimeout(timer);
+			unregister();
 			reject(new Error(command[0] + " の実行に失敗しました: " + error.name));
 		});
 		child.on("close", (code, signal) => {
 			if (finished) return;
 			finished = true;
 			clearTimeout(timer);
+			unregister();
 			if (timedOut) {
 				reject(new Error(command[0] + " の実行がタイムアウトしました。"));
 				return;

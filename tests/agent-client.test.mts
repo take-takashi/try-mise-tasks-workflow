@@ -424,3 +424,123 @@ test("agy の設定検証、エフォート・課金扱い、環境分離、stdi
 		/ツール使用が拒否されたため、構造化出力を取得できませんでした/,
 	);
 });
+
+test("runWritableStructured はシェル禁止可能なプロバイダーで最小権限を揃え codex を拒否する", async (t) => {
+	const root = executables(t);
+	const codexClient = new AgentClient({
+		cwd: root,
+		workflow: "review",
+		environment: {
+			PATH: root,
+			MDW_REVIEW_FIX_PROVIDER: "codex",
+		},
+		run: async () => {
+			throw new Error("codex は起動されないはず");
+		},
+	});
+	await assert.rejects(
+		codexClient.runWritableStructured(
+			codexClient.config("fix"),
+			"fix prompt",
+			{
+				type: "object",
+			},
+			{ role: "fix" },
+		),
+		/シェル実行を禁止できないため codex は使用できません。MDW_REVIEW_FIX_PROVIDER/,
+	);
+
+	for (const provider of ["claude", "agy"]) {
+		const calls = [];
+		const client = new AgentClient({
+			cwd: root,
+			workflow: "review",
+			environment: {
+				PATH: root,
+				MDW_REVIEW_FIX_PROVIDER: provider,
+			},
+			run: async (args, options) => {
+				calls.push({ args, options });
+				if (provider === "agy") {
+					return {
+						stdout: Buffer.from(
+							JSON.stringify({
+								status: "SUCCESS",
+								structured_output: { ok: true },
+								denied_actions: [],
+							}),
+						),
+						stderr: Buffer.alloc(0),
+					};
+				}
+				return {
+					stdout: Buffer.from(
+						JSON.stringify({
+							structured_output: { ok: true },
+							permission_denials: [],
+						}),
+					),
+					stderr: Buffer.alloc(0),
+				};
+			},
+		});
+		const result = await client.runWritableStructured(
+			client.config("fix"),
+			"fix prompt",
+			{ type: "object" },
+			{
+				allowWritePaths: ["app.txt"],
+				denyWritePaths: [".github", ".mdw"],
+				role: "fix",
+			},
+		);
+		assert.deepEqual(result, { data: { ok: true }, permissionDenials: 0 });
+		assert.equal(calls.length, 1);
+		const { args, options } = calls[0];
+		assert.equal(options.input, "fix prompt");
+		if (provider === "claude") {
+			assert.equal(args[args.indexOf("--permission-mode") + 1], "acceptEdits");
+			assert.equal(
+				args[args.indexOf("--tools") + 1],
+				"Read,Grep,Glob,Edit,Write",
+			);
+			assert.equal(args[args.indexOf("--setting-sources") + 1], "");
+			const claudeSettings = JSON.parse(args[args.indexOf("--settings") + 1]);
+			assert.ok(claudeSettings.permissions.deny.includes("Bash(*)"));
+			assert.ok(claudeSettings.permissions.deny.includes("Write(.git/**)"));
+			assert.ok(claudeSettings.permissions.deny.includes("Write(.claude/**)"));
+			assert.ok(claudeSettings.permissions.deny.includes("Edit(.github/**)"));
+		} else {
+			assert.ok(args.includes("--sandbox"));
+			assert.ok(args.includes("--disable-slash-commands"));
+			const settings = JSON.parse(args[args.indexOf("--settings") + 1]);
+			assert.deepEqual(settings.permissions.allow, [
+				`read_file(${root})`,
+				`write_file(${path.join(root, "app.txt")})`,
+			]);
+			assert.ok(settings.permissions.deny.includes("command(*)"));
+			assert.ok(settings.permissions.deny.includes("read_url(*)"));
+			assert.ok(settings.permissions.deny.includes("mcp(*)"));
+			assert.ok(
+				settings.permissions.deny.includes(
+					`write_file(${path.join(root, ".git")})`,
+				),
+			);
+			assert.ok(
+				settings.permissions.deny.includes(
+					`write_file(${path.join(root, ".claude")})`,
+				),
+			);
+			assert.ok(
+				settings.permissions.deny.includes(
+					`write_file(${path.join(root, ".github")})`,
+				),
+			);
+			assert.ok(
+				settings.permissions.deny.includes(
+					`write_file(${path.join(root, ".mdw")})`,
+				),
+			);
+		}
+	}
+});

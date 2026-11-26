@@ -119,6 +119,59 @@ function agyReadOnlySettings(tools) {
 	});
 }
 
+function agyWritableSettings(
+	cwd,
+	{ allowWritePaths = [], denyWritePaths = [] } = {},
+) {
+	const writeAllows =
+		allowWritePaths.length > 0
+			? [...new Set(allowWritePaths)].map(
+					(entry) => `write_file(${path.resolve(cwd, entry)})`,
+				)
+			: [`write_file(${cwd})`];
+	const deniedWriteRules = [
+		...new Set([".git", ".claude", ".agents", ...denyWritePaths]),
+	].map((entry) => `write_file(${path.resolve(cwd, entry)})`);
+	return JSON.stringify({
+		agentMode: "",
+		enableTerminalSandbox: true,
+		toolPermission: "request-review",
+		permissions: {
+			allow: [`read_file(${cwd})`, ...writeAllows],
+			deny: [
+				"command(*)",
+				"read_url(*)",
+				"execute_url(*)",
+				"mcp(*)",
+				...deniedWriteRules,
+			],
+		},
+	});
+}
+
+function claudeWritableSettings(denyWritePaths = []) {
+	const patterns = [
+		...new Set([
+			".git/**",
+			".claude/**",
+			".agents/**",
+			"mise*.toml",
+			".mise*.toml",
+			".env*",
+			...denyWritePaths.flatMap((entry) =>
+				entry.includes(".") && !entry.startsWith(".")
+					? [entry]
+					: [`${entry}`, `${entry}/**`],
+			),
+		]),
+	];
+	const deny = [
+		"Bash(*)",
+		...patterns.flatMap((pattern) => [`Edit(${pattern})`, `Write(${pattern})`]),
+	];
+	return JSON.stringify({ permissions: { deny } });
+}
+
 function config(workflow, role, env, cwd) {
 	const setting = (field, fallback) =>
 		resolveSetting(workflow, role, field, fallback, env);
@@ -329,11 +382,18 @@ export class AgentClient {
 		);
 	}
 
-	async runStructured(
+	async #executeStructured(
 		settings,
 		prompt,
 		schema,
-		{ tools = "Read,Grep,Glob,Bash" } = {},
+		{
+			codexSandbox,
+			claudeTools,
+			claudePermissionMode,
+			claudeExtraArgs = [],
+			agySettings,
+			agyInput,
+		},
 	) {
 		const { provider, model, effort, billing, executable } = settings;
 		const env = childEnvironment(provider, billing, this.#environment);
@@ -356,7 +416,7 @@ export class AgentClient {
 						"-c",
 						"model_reasoning_effort=" + JSON.stringify(effort),
 						"--sandbox",
-						"read-only",
+						codexSandbox,
 						"--ephemeral",
 						...(model ? ["--model", model] : []),
 						"--output-schema",
@@ -380,9 +440,10 @@ export class AgentClient {
 					"--effort",
 					effort,
 					"--tools",
-					tools,
+					claudeTools,
 					"--permission-mode",
-					"plan",
+					claudePermissionMode,
+					...claudeExtraArgs,
 					"--strict-mcp-config",
 					"--no-chrome",
 					"--no-session-persistence",
@@ -416,7 +477,7 @@ export class AgentClient {
 					"--sandbox",
 					"--disable-slash-commands",
 					"--settings",
-					agyReadOnlySettings(tools),
+					agySettings,
 					"--output-format",
 					"json",
 					"--json-schema",
@@ -429,7 +490,7 @@ export class AgentClient {
 				{
 					cwd: this.cwd,
 					env,
-					input: agyStructuredPrompt(prompt, tools),
+					input: agyInput,
 					timeout,
 				},
 			);
@@ -460,6 +521,63 @@ export class AgentClient {
 			permissionDenials = envelope.denied_actions?.length ?? 0;
 		}
 		return { data, permissionDenials };
+	}
+
+	async runStructured(
+		settings,
+		prompt,
+		schema,
+		{ tools = "Read,Grep,Glob,Bash" } = {},
+	) {
+		return await this.#executeStructured(settings, prompt, schema, {
+			codexSandbox: "read-only",
+			claudeTools: tools,
+			claudePermissionMode: "plan",
+			agySettings: agyReadOnlySettings(tools),
+			agyInput: agyStructuredPrompt(prompt, tools),
+		});
+	}
+
+	assertWritableProvider(settings, role?: string) {
+		if (settings?.provider === "codex") {
+			const envKey = `MDW_${this.workflow.toUpperCase()}${role ? `_${role.toUpperCase()}` : ""}_PROVIDER`;
+			throw new Error(
+				`書き込みを伴う構造化実行ではシェル実行を禁止できないため codex は使用できません。${envKey} に agy または claude を指定してください。`,
+			);
+		}
+	}
+
+	async runWritableStructured(
+		settings,
+		prompt,
+		schema,
+		{
+			allowWritePaths = [],
+			denyWritePaths = [],
+			role,
+		}: {
+			allowWritePaths?: string[];
+			denyWritePaths?: string[];
+			role?: string;
+		} = {},
+	) {
+		this.assertWritableProvider(settings, role);
+		return await this.#executeStructured(settings, prompt, schema, {
+			codexSandbox: "workspace-write",
+			claudeTools: "Read,Grep,Glob,Edit,Write",
+			claudePermissionMode: "acceptEdits",
+			claudeExtraArgs: [
+				"--setting-sources",
+				"",
+				"--settings",
+				claudeWritableSettings(denyWritePaths),
+			],
+			agySettings: agyWritableSettings(this.cwd, {
+				allowWritePaths,
+				denyWritePaths,
+			}),
+			agyInput: prompt,
+		});
 	}
 }
 
