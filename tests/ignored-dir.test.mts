@@ -139,11 +139,15 @@ test("シンボリックリンクや通常ファイルでない対象を拒否�
 	const outsideFile = path.join(outside, "target.txt");
 	fs.writeFileSync(outsideFile, "untouched\n");
 
-	// .reviews 自体がシンボリックリンクの場合
+	// .reviews 自体がシンボリックリンクの場合（末尾スラッシュ付きパスでも拒否する）
 	fs.symlinkSync(outside, path.join(root, ".reviews"));
 	const workspace = new ReviewWorkspace(root);
 	assert.throws(() => workspace.reset(), /シンボリックリンク/);
 	assert.throws(() => workspace.write("merged.json", {}), /シンボリックリンク/);
+	assert.throws(
+		() => ensureIgnoredDirectory(`${path.join(root, ".reviews")}${path.sep}`),
+		/シンボリックリンク/,
+	);
 	assert.equal(fs.existsSync(path.join(outside, ".gitignore")), false);
 	fs.rmSync(path.join(root, ".reviews"));
 

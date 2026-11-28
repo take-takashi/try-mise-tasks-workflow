@@ -28,17 +28,16 @@ function assertNotSymlinkOrInvalid(
 }
 
 // 対象ディレクトリを安全に作成し、未存在であれば自身を含めて無視する .gitignore を配置する。
-export function ensureIgnoredDirectory(
-	dir: string,
-	label = path.basename(dir),
-) {
-	const dirExists = assertNotSymlinkOrInvalid(dir, label, "dir");
+export function ensureIgnoredDirectory(dir: string, label?: string) {
+	const targetDir = path.resolve(dir);
+	const displayLabel = label ?? path.basename(targetDir);
+	const dirExists = assertNotSymlinkOrInvalid(targetDir, displayLabel, "dir");
 	if (!dirExists) {
-		fs.mkdirSync(dir, { recursive: true });
-		assertNotSymlinkOrInvalid(dir, label, "dir");
+		fs.mkdirSync(targetDir, { recursive: true });
+		assertNotSymlinkOrInvalid(targetDir, displayLabel, "dir");
 	}
-	const gitignore = path.join(dir, ".gitignore");
-	const gitignoreLabel = `${label}/.gitignore`;
+	const gitignore = path.join(targetDir, ".gitignore");
+	const gitignoreLabel = `${displayLabel}/.gitignore`;
 	if (assertNotSymlinkOrInvalid(gitignore, gitignoreLabel, "file")) {
 		return;
 	}
