@@ -19,8 +19,8 @@ export async function run({
 	nodeVersion = process.versions.node,
 	platform = process.platform,
 } = {}) {
-	// 実行場所が属する Git worktree のルートを特定する（Git 管理外はエラー）。
-	const root = await resolveGitRoot(cwd);
+	// 実行場所が属する Git worktree のルートを特定する（git 不在や Git 管理外はエラー）。
+	const root = await resolveGitRoot(cwd, env, platform);
 	// 設定ファイル（.mise/conf.d/mdw.toml・.mdw/.gitignore・.mdw/models.env）を計画または配置する。
 	const files = planAndApplyInitFiles(root, { force, dryRun });
 	// Node.js・Git・gh・AI CLI・タスク実行権限・mise.toml 重複を診断する。

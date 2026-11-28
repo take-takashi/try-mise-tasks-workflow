@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { findExecutableOnPath } from "../.mise/tasks/mdw/_lib/agent-client.mts";
 import {
 	confDTemplate,
 	mdwGitignoreTemplate,
@@ -41,7 +42,7 @@ function createCopiedRepo(t: test.TestContext) {
 	return { temp, root };
 }
 
-test("空の Git リポジトリで mise run mdw:init が設定を配置し、mise の環境変数優先順位が機能する", (t) => {
+test("空の Git リポジトリで mise run mdw:init が設定を配置し、mise の環境変数優先順位と --force が機能する", (t) => {
 	const { root } = createCopiedRepo(t);
 	const cleanEnv = { ...process.env, MISE_TRUSTED_CONFIG_PATHS: root };
 	for (const key of Object.keys(cleanEnv)) {
@@ -92,6 +93,40 @@ test("空の Git リポジトリで mise run mdw:init が設定を配置し、mi
 	assert.equal(modelsContent, modelsEnvTemplate);
 	// 雛形に API キー等の秘密情報を含めない。
 	assert.equal(/API_KEY\s*=|TOKEN\s*=|SECRET\s*=/i.test(modelsContent), false);
+
+	// CLI 経由の --force --dry-run および --force が usage_force を受け渡して動作する。
+	fs.writeFileSync(path.join(root, ".mise/conf.d/mdw.toml"), "# stale\n");
+	const dryForceOutput = JSON.parse(
+		runCmd(["mise", "run", "mdw:init", "--force", "--dry-run"], root, cleanEnv),
+	);
+	assert.deepEqual(
+		dryForceOutput.files.map((item) => [item.path, item.action]),
+		[
+			[".mise/conf.d/mdw.toml", "would_update"],
+			[".mdw/.gitignore", "unchanged"],
+			[".mdw/models.env", "skipped"],
+		],
+	);
+	assert.equal(
+		fs.readFileSync(path.join(root, ".mise/conf.d/mdw.toml"), "utf8"),
+		"# stale\n",
+	);
+
+	const forceOutput = JSON.parse(
+		runCmd(["mise", "run", "mdw:init", "--force"], root, cleanEnv),
+	);
+	assert.deepEqual(
+		forceOutput.files.map((item) => [item.path, item.action]),
+		[
+			[".mise/conf.d/mdw.toml", "updated"],
+			[".mdw/.gitignore", "unchanged"],
+			[".mdw/models.env", "skipped"],
+		],
+	);
+	assert.equal(
+		fs.readFileSync(path.join(root, ".mise/conf.d/mdw.toml"), "utf8"),
+		confDTemplate,
+	);
 
 	// .mdw/.gitignore により .mdw/models.local.env が Git の無視対象になる。
 	fs.writeFileSync(
@@ -170,7 +205,7 @@ test("サブディレクトリ実行・再実行スキップ・--force 時の保
 	);
 });
 
-test("Git 管理外・不明オプション・シンボリックリンクを拒否する", async (t) => {
+test("Git 管理外・git 不在・不明オプション・シンボリックリンク・非通常ファイルを拒否する", async (t) => {
 	const outside = fs.mkdtempSync(path.join(os.tmpdir(), "mdw-init-nogit-"));
 	t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
 	await assert.rejects(runInit({ cwd: outside }), /Git リポジトリ内/);
@@ -178,12 +213,34 @@ test("Git 管理外・不明オプション・シンボリックリンクを拒�
 	assert.equal(fs.existsSync(path.join(outside, ".mise")), false);
 
 	const { temp, root } = createCopiedRepo(t);
+	// git CLI が PATH に存在しない場合は Git 管理外ではなく git 不在としてエラーにする。
+	await assert.rejects(
+		runInit({ cwd: root, env: { PATH: "" } }),
+		/git CLI が PATH に見つかりません/,
+	);
+
 	const escapeDir = path.join(temp, "escape");
 	fs.mkdirSync(escapeDir);
+	const escapeFile = path.join(escapeDir, "target.env");
+	fs.writeFileSync(escapeFile, "original\n");
+
+	// 親ディレクトリがシンボリックリンクの場合
 	fs.symlinkSync(escapeDir, path.join(root, ".mdw"));
 	await assert.rejects(runInit({ cwd: root }), /シンボリックリンク/);
 	assert.equal(fs.existsSync(path.join(escapeDir, "models.env")), false);
 	fs.rmSync(path.join(root, ".mdw"));
+
+	// 対象ファイル自体がシンボリックリンクの場合
+	fs.mkdirSync(path.join(root, ".mdw"));
+	fs.symlinkSync(escapeFile, path.join(root, ".mdw/models.env"));
+	await assert.rejects(runInit({ cwd: root }), /シンボリックリンク/);
+	assert.equal(fs.readFileSync(escapeFile, "utf8"), "original\n");
+	fs.rmSync(path.join(root, ".mdw"), { recursive: true, force: true });
+
+	// 対象ファイル自体がディレクトリの場合
+	fs.mkdirSync(path.join(root, ".mdw/models.env"), { recursive: true });
+	await assert.rejects(runInit({ cwd: root }), /通常ファイルではありません/);
+	fs.rmSync(path.join(root, ".mdw"), { recursive: true, force: true });
 
 	// 不明オプションを直接渡したときはエラーになる。
 	const bad = spawnSync(
@@ -195,33 +252,82 @@ test("Git 管理外・不明オプション・シンボリックリンクを拒�
 	assert.match(bad.stderr, /mise run/);
 });
 
-test("実行権限不足・mise.toml 重複・AI CLI や gh 不在を診断し正常終了する", async (t) => {
-	const { root } = createCopiedRepo(t);
+test("実行権限不足のクォート・シンボリックリンク除外・mise.toml 重複・非対応 Node・Windows PATH 探索を検証する", async (t) => {
+	const { temp, root } = createCopiedRepo(t);
 	fs.writeFileSync(
 		path.join(root, "mise.toml"),
 		'[env]\n_.file = [".mdw/models.env"]\n',
 	);
+
+	// git だけを置いた PATH を用意し、gh・AI CLI 不在でも正常終了することを検証する。
+	const gitOnlyBin = path.join(temp, "git-only-bin");
+	fs.mkdirSync(gitOnlyBin);
+	const realGit = findExecutableOnPath("git", process.env, root);
+	assert.ok(realGit);
+	fs.symlinkSync(realGit, path.join(gitOnlyBin, "git"));
+
 	const targetTask = path.join(root, ".mise/tasks/mdw/check.mts");
+	const trickyTask = path.join(root, ".mise/tasks/mdw/odd'name task.mts");
+	const outsideFile = path.join(temp, "outside-nonexec.mts");
+	fs.writeFileSync(outsideFile, "// outside\n", { mode: 0o644 });
 	if (process.platform !== "win32") {
 		fs.chmodSync(targetTask, 0o644);
+		fs.writeFileSync(trickyTask, "// tricky\n", { mode: 0o644 });
+		fs.symlinkSync(
+			outsideFile,
+			path.join(root, ".mise/tasks/mdw/symlink-task.mts"),
+		);
 	}
 
 	const result = await runInit({
 		cwd: root,
-		env: { PATH: "" },
+		env: { PATH: gitOnlyBin },
+		nodeVersion: "24.1.0",
 	});
 
-	assert.equal(result.diagnostics.git.found, false);
+	assert.equal(result.diagnostics.node.ok, false);
+	assert.equal(result.diagnostics.git.found, true);
 	assert.equal(result.diagnostics.gh.found, false);
 	assert.deepEqual(result.diagnostics.ai_clis.detected, []);
 	assert.deepEqual(result.diagnostics.mise_toml_overlap, ["mise.toml"]);
+	assert.ok(
+		result.diagnostics.warnings.some((warning) => warning.includes("24.1.0")),
+	);
 	if (process.platform !== "win32") {
-		assert.ok(
-			result.diagnostics.task_permissions.missing_executable.includes(
-				".mise/tasks/mdw/check.mts",
-			),
+		const missing = result.diagnostics.task_permissions.missing_executable;
+		assert.ok(missing.includes(".mise/tasks/mdw/check.mts"));
+		assert.ok(missing.includes(".mise/tasks/mdw/odd'name task.mts"));
+		assert.equal(missing.includes(".mise/tasks/mdw/symlink-task.mts"), false);
+		const chmodStep = result.next_steps.find((step) =>
+			step.includes("chmod +x -- "),
 		);
-		assert.ok(result.next_steps.some((step) => step.includes("chmod +x")));
+		assert.ok(chmodStep);
+		assert.ok(chmodStep.includes("'.mise/tasks/mdw/odd'\\''name task.mts'"));
 	}
-	assert.ok(result.diagnostics.warnings.length >= 3);
+
+	// Windows 環境の Path / PATHEXT 探索を検証する。
+	const winBin = path.join(temp, "win-bin");
+	fs.mkdirSync(winBin);
+	fs.writeFileSync(path.join(winBin, "git.EXE"), "");
+	fs.writeFileSync(path.join(winBin, "codex.cmd"), "");
+	const foundGit = findExecutableOnPath(
+		"git",
+		{ Path: winBin, PATHEXT: ".EXE;.CMD" },
+		root,
+		"win32",
+	);
+	const foundCodex = findExecutableOnPath(
+		"codex",
+		{ Path: winBin, PATHEXT: ".EXE;.CMD" },
+		root,
+		"win32",
+	);
+	assert.equal(
+		foundGit?.toLowerCase(),
+		path.join(winBin, "git.exe").toLowerCase(),
+	);
+	assert.equal(
+		foundCodex?.toLowerCase(),
+		path.join(winBin, "codex.cmd").toLowerCase(),
+	);
 });

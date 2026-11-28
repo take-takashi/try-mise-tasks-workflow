@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { findExecutableOnPath, supportedProviders } from "./agent-client.mts";
 import { discoverRoot } from "./interactive.mts";
 import { checkNodeVersion } from "./node-version.mts";
 
@@ -50,10 +51,21 @@ const initEntries = [
 
 export async function resolveGitRoot(
 	cwd = process.env.MISE_ORIGINAL_CWD || process.cwd(),
+	env: NodeJS.ProcessEnv = process.env,
+	platform: NodeJS.Platform = process.platform,
 ) {
+	if (!findExecutableOnPath("git", env, cwd, platform)) {
+		throw new Error(
+			"git CLI が PATH に見つかりません。Git をインストールしてから再実行してください。",
+		);
+	}
 	try {
-		return await discoverRoot(cwd);
-	} catch {
+		return await discoverRoot(cwd, { env });
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		if (message.includes("タイムアウト")) {
+			throw new Error(`Git ルートの確認がタイムアウトしました: ${message}`);
+		}
 		throw new Error(
 			"Git リポジトリ内で実行してください（Git 管理外のディレクトリには初期化できません）。",
 		);
@@ -185,22 +197,6 @@ export function planAndApplyInitFiles(
 	}));
 }
 
-function findExecutableOnPath(
-	name: string,
-	env: NodeJS.ProcessEnv,
-	cwd: string,
-) {
-	for (const dir of (env.PATH || "").split(path.delimiter)) {
-		if (!dir) continue;
-		const candidate = path.resolve(cwd, dir, name);
-		try {
-			fs.accessSync(candidate, fs.constants.X_OK);
-			if (fs.statSync(candidate).isFile()) return candidate;
-		} catch {}
-	}
-	return null;
-}
-
 function collectPublicTaskFiles(directory: string, list: string[] = []) {
 	if (!fs.existsSync(directory)) return list;
 	for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -208,7 +204,7 @@ function collectPublicTaskFiles(directory: string, list: string[] = []) {
 		if (entry.isDirectory()) {
 			if (entry.name === "_lib" || entry.name === "prompts") continue;
 			collectPublicTaskFiles(fullPath, list);
-		} else if (entry.name.endsWith(".mts")) {
+		} else if (entry.isFile() && entry.name.endsWith(".mts")) {
 			list.push(fullPath);
 		}
 	}
@@ -231,6 +227,10 @@ function inspectMiseTomlOverlap(root: string) {
 	return overlapping;
 }
 
+function shellQuotePosix(value: string) {
+	return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
 export function diagnoseEnvironment(
 	root: string,
 	{
@@ -241,13 +241,14 @@ export function diagnoseEnvironment(
 ) {
 	const resolvedRoot = path.resolve(root);
 	const node = checkNodeVersion(nodeVersion);
-	const git = findExecutableOnPath("git", env, resolvedRoot);
-	const gh = findExecutableOnPath("gh", env, resolvedRoot);
-	const aiClis = {
-		agy: findExecutableOnPath("agy", env, resolvedRoot),
-		codex: findExecutableOnPath("codex", env, resolvedRoot),
-		claude: findExecutableOnPath("claude", env, resolvedRoot),
-	};
+	const git = findExecutableOnPath("git", env, resolvedRoot, platform);
+	const gh = findExecutableOnPath("gh", env, resolvedRoot, platform);
+	const aiClis = Object.fromEntries(
+		supportedProviders.map((provider) => [
+			provider,
+			findExecutableOnPath(provider, env, resolvedRoot, platform),
+		]),
+	);
 	const detectedAiClis = Object.entries(aiClis)
 		.filter(([, found]) => Boolean(found))
 		.map(([name]) => name);
@@ -257,7 +258,8 @@ export function diagnoseEnvironment(
 	if (platform !== "win32") {
 		for (const filePath of collectPublicTaskFiles(tasksDir)) {
 			try {
-				if ((fs.statSync(filePath).mode & 0o111) === 0) {
+				const stats = fs.lstatSync(filePath);
+				if (stats.isFile() && (stats.mode & 0o111) === 0) {
 					nonExecutableTasks.push(
 						path.relative(resolvedRoot, filePath).split(path.sep).join("/"),
 					);
@@ -277,7 +279,7 @@ export function diagnoseEnvironment(
 		);
 	if (detectedAiClis.length === 0) {
 		warnings.push(
-			"AI CLI（agy / codex / claude）が PATH に見つかりません（mdw:intent や --prompt 以外の実行にはいずれかの CLI が必要です）。",
+			`AI CLI（${supportedProviders.join(" / ")}）が PATH に見つかりません（mdw:intent や --prompt 以外の実行にはいずれかの CLI が必要です）。`,
 		);
 	}
 	if (nonExecutableTasks.length > 0) {
@@ -320,8 +322,11 @@ export function buildNextSteps(files, diagnostics) {
 		);
 	}
 	if (diagnostics.task_permissions.missing_executable.length > 0) {
+		const quotedPaths = diagnostics.task_permissions.missing_executable
+			.map(shellQuotePosix)
+			.join(" ");
 		steps.push(
-			`公開タスクに実行権限を付与してください: chmod +x ${diagnostics.task_permissions.missing_executable.join(" ")}`,
+			`公開タスクに実行権限を付与してください: chmod +x -- ${quotedPaths}`,
 		);
 	}
 	if (

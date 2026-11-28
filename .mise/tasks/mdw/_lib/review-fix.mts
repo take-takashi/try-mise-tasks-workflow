@@ -22,6 +22,10 @@ const protectedTopLevelDirs = new Set([
 ]);
 export const writableDenyPaths = [
 	...protectedTopLevelDirs,
+	".mise/conf.d",
+	".mise/config.toml",
+	"mise/conf.d",
+	"mise/config.toml",
 	"mise.toml",
 	".mise.toml",
 	".env",
@@ -188,6 +192,13 @@ export function isProtectedPath(filePath) {
 		return true;
 	}
 	if (protectedTopLevelDirs.has(segments[0])) return true;
+	if (
+		(segments[0] === ".mise" || segments[0] === "mise") &&
+		(segments[1] === "conf.d" ||
+			(segments.length === 2 && /^config(?:\..+)?\.toml$/i.test(segments[1])))
+	) {
+		return true;
+	}
 	if (segments.includes(".git")) return true;
 	const base = segments[segments.length - 1].toLowerCase();
 	if (
