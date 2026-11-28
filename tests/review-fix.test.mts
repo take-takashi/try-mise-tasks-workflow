@@ -335,6 +335,9 @@ test("review-fix の設定・Issue 解決・プロンプト順序・計画検証
 
 	assert.equal(isProtectedPath(".github/workflows/ci.yml"), true);
 	assert.equal(isProtectedPath(".mdw/models.env"), true);
+	assert.equal(isProtectedPath(".mise/conf.d/mdw.toml"), true);
+	assert.equal(isProtectedPath(".mise/config.toml"), true);
+	assert.equal(isProtectedPath("mise/conf.d/mdw.toml"), true);
 	assert.equal(isProtectedPath("mise.toml"), true);
 	assert.equal(isProtectedPath("mise.local.toml"), true);
 	assert.equal(isProtectedPath(".env.production"), true);

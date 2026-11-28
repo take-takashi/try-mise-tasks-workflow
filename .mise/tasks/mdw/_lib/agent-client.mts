@@ -26,15 +26,51 @@ function resolveSetting(workflow, role, field, fallback, env) {
 export function resolveReviewSetting(role, field, fallback, env = process.env) {
 	return resolveSetting("review", role, field, fallback, env);
 }
-function executableOnPath(name, env, cwd) {
-	for (const dir of (env.PATH || "").split(path.delimiter)) {
-		const file = path.resolve(cwd, dir || ".", name);
-		try {
-			fs.accessSync(file, fs.constants.X_OK);
-			if (fs.statSync(file).isFile()) return file;
-		} catch {}
+export const supportedProviders = ["codex", "claude", "agy"] as const;
+
+export function findExecutableOnPath(
+	name,
+	env = process.env,
+	cwd = process.cwd(),
+	platform = process.platform,
+) {
+	const delimiter = platform === "win32" ? ";" : path.delimiter;
+	const rawPath =
+		platform === "win32" ? (env.PATH ?? env.Path ?? "") : (env.PATH ?? "");
+	const extensions =
+		platform === "win32"
+			? [
+					...new Set([
+						"",
+						...(env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+							.split(";")
+							.map((ext) => ext.trim())
+							.filter(Boolean)
+							.flatMap((ext) => [ext, ext.toLowerCase()]),
+					]),
+				]
+			: [""];
+	for (const dir of rawPath.split(delimiter)) {
+		if (!dir) continue;
+		for (const ext of extensions) {
+			const candidateName =
+				ext && !name.toLowerCase().endsWith(ext.toLowerCase())
+					? `${name}${ext}`
+					: name;
+			const file = path.resolve(cwd, dir, candidateName);
+			try {
+				if (platform !== "win32") fs.accessSync(file, fs.constants.X_OK);
+				if (fs.statSync(file).isFile()) return file;
+			} catch {}
+		}
 	}
-	throw new Error(name + " CLI が見つかりません。");
+	return null;
+}
+
+function executableOnPath(name, env, cwd) {
+	const found = findExecutableOnPath(name, env, cwd);
+	if (found) return found;
+	throw new Error(`${name} CLI が見つかりません。`);
 }
 const agyEfforts = ["low", "medium", "high", "xhigh", "max"];
 const agyModelEffortPattern = /-(low|medium|high|xhigh|max)$/;
@@ -155,6 +191,10 @@ function claudeWritableSettings(denyWritePaths = []) {
 			".git/**",
 			".claude/**",
 			".agents/**",
+			".mise/conf.d/**",
+			"mise/conf.d/**",
+			".mise/config*.toml",
+			"mise/config*.toml",
 			"mise*.toml",
 			".mise*.toml",
 			".env*",
@@ -184,10 +224,7 @@ function config(workflow, role, env, cwd) {
 		provider === "agy"
 			? ["subscription", "api", "cli"]
 			: ["subscription", "api"];
-	if (
-		!["codex", "claude", "agy"].includes(provider) ||
-		!validBilling.includes(billing)
-	)
+	if (!supportedProviders.includes(provider) || !validBilling.includes(billing))
 		throw new Error(`${scope}_* の設定が不正です。`);
 	if (provider === "codex" && billing !== "subscription")
 		throw new Error("CodexのAPI課金はこのPoCでは対応していません。");

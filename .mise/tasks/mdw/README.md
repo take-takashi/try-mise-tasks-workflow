@@ -20,6 +20,7 @@
 | 「レビュー結果を PR に投稿して」                           | `mise run mdw:review:post --dry-run` で対象を確認し、依頼された PR に `--pr <URL>` を指定してインラインコメント付きで投稿する。                                             |
 | 「PR の未解決レビューコメントを確認・返信して」            | `mise run mdw:review:threads --pr <URL>` で未解決スレッドを取得し、`mise run mdw:review:reply --pr <URL> --thread <ID> --body ... [--resolve]` で返信・resolve する。       |
 | 「PR の未解決レビュー指摘を自律修正して resolve して」     | 対象 PR の worktree で `mise run mdw:review:fix --pr <URL> [--verify <cmd>] [--dry-run]` を実行し、修正・検証・プッシュ・返信＆resolve（判断不能時は `mdw:wait`）を進める。 |
+| 「MDW の初期設定と環境診断をして」                         | `mise run mdw:init [--dry-run] [--force]` を実行し、`.mise/conf.d/mdw.toml`・`.mdw/.gitignore`・`.mdw/models.env` の配置と環境診断を行う。                                  |
 | 「CLI の設定と認証を確認して」                             | `mise run mdw:check` を使う。これはレビュー用の設定と認証の確認で、モデルの利用可否までは保証しない。                                                                       |
 | 「作業用 worktree を作って」                               | 作業に合う Conventional Branch 名を決め、`mise run mdw:worktree:new --branch <branch>` を実行する。                                                                         |
 | 「マージ済みの worktree を整理して」                       | 対象の外から `mise run mdw:worktree:cleanup <path>` を実行する。                                                                                                            |
@@ -110,7 +111,7 @@ mise run mdw:worktree:cleanup /絶対パス/.worktree/feat-example-change
 
 ## 別のプロジェクトへ導入する
 
-`.mise/tasks/mdw/` をフォルダーごとコピーすると、このガイドと共有プロンプトも一緒に移せます。Node.js（v22.18.0 以降の 22 系 LTS または v24.2.0 以降）、mise、Git と、必要な AI CLI を実行できるようにし、公開タスクの実行権限を保持してください（コピー先プロジェクトの Node.js バージョン管理には介入しません）。プロンプトの出力だけなら AI CLI のインストールや認証は不要です。実行時に生成される `.reviews/` と `.worktree/` には自身を含めて無視する `.gitignore` を自動作成するため、コピー先のルート `.gitignore` を編集する必要はありません。
+`.mise/tasks/mdw/` をフォルダーごとコピーして `mise run mdw:init` を実行すると、このガイドと共有プロンプトの移行に加えて `.mise/conf.d/mdw.toml`・`.mdw/.gitignore`・`.mdw/models.env` の配置と環境診断をまとめて行えます（コピー先の `mise.toml` や `AGENTS.md` は書き換えません）。Node.js（v22.18.0 以降の 22 系 LTS または v24.2.0 以降）、mise、Git と、必要な AI CLI を実行できるようにし、公開タスクの実行権限を保持してください（コピー先プロジェクトの Node.js バージョン管理には介入しません）。プロンプトの出力だけなら AI CLI のインストールや認証は不要です。実行時に生成される `.reviews/` と `.worktree/` には自身を含めて無視する `.gitignore` を自動作成するため、コピー先のルート `.gitignore` を編集する必要はありません。
 
 AI にこのガイドを読ませてから作業を依頼してください。継続して使う場合は、対象プロジェクトの AI 向け指示に、例えば次の内容を追加できます。
 
