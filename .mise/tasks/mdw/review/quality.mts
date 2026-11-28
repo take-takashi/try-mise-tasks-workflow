@@ -4,7 +4,7 @@
 //USAGE flag "--head <ref>" help="レビュー対象のブランチまたはコミット" default="HEAD"
 
 import { AgentClient } from "../_lib/agent-client.mts";
-import { cli } from "../_lib/cli.mts";
+import { cli, isMainModule } from "../_lib/cli.mts";
 import { validateReviewPrompts } from "../_lib/review-data.mts";
 import { prepare } from "../_lib/review-steps.mts";
 import { ReviewWorkspace } from "../_lib/review-workspace.mts";
@@ -25,7 +25,7 @@ export async function run(options = {}) {
 }
 
 // タスクファイルを実行したときに run() を呼び出す。import ではレビューを開始しない。
-if (import.meta.main) {
+if (isMainModule(import.meta)) {
 	// ヘルプの表示と、失敗時の終了コードの設定を cli() に任せる。
 	await cli(
 		"品質の観点でレビューします。",

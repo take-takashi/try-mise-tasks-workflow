@@ -3,7 +3,7 @@
 //USAGE flag "--pr <url>" help="対象の GitHub Pull Request の URL"
 //USAGE flag "--all" help="解決済みスレッドも含めて取得する"
 
-import { cli } from "../_lib/cli.mts";
+import { cli, isMainModule } from "../_lib/cli.mts";
 import { verifyOpenPullRequest } from "../_lib/github-pr.mts";
 import { fetchReviewThreads } from "../_lib/review-threads.mts";
 
@@ -15,7 +15,7 @@ export async function run({ pr, includeResolved = false } = {}) {
 }
 
 // タスクファイルを直接実行したときに、mise が渡した引数で run() を呼び出す。
-if (import.meta.main) {
+if (isMainModule(import.meta)) {
 	await cli(
 		"GitHub Pull Request の未解決レビュースレッドを JSON で取得します。",
 		async () => {

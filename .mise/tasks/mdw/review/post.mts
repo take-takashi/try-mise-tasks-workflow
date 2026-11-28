@@ -4,6 +4,10 @@
 //USAGE flag "--dry-run" help="投稿する本文とインラインコメント予定を表示する"
 import { loadJudgedReview } from "../_lib/judge.mts";
 import {
+	assertSupportedNodeVersion,
+	isMainModule,
+} from "../_lib/node-version.mts";
+import {
 	collectDiffLineRanges,
 	formatDryRunReview,
 	postReview,
@@ -29,8 +33,9 @@ export async function run({ pr, dryRun = false } = {}) {
 }
 
 // タスクファイルを直接実行したときに、mise が渡した引数で run() を呼び出す。
-if (import.meta.main) {
+if (isMainModule(import.meta)) {
 	try {
+		assertSupportedNodeVersion();
 		const result = await run({
 			pr: process.env.usage_pr,
 			dryRun: process.env.usage_dry_run === "true",

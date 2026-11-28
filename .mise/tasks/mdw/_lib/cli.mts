@@ -1,8 +1,15 @@
-import { assertSupportedNodeVersion } from "./node-version.mts";
+import { assertSupportedNodeVersion, isMainModule } from "./node-version.mts";
 
-export async function cli(description, action, { usage = false } = {}) {
+export { isMainModule };
+
+export async function cli(
+	description,
+	action,
+	{ usage = false, nodeVersion } = {},
+) {
 	try {
-		assertSupportedNodeVersion();
+		if (nodeVersion !== undefined) assertSupportedNodeVersion(nodeVersion);
+		else assertSupportedNodeVersion();
 		const args = process.argv.slice(2);
 		if (args.includes("--help") || args.includes("-h")) {
 			console.log(description);

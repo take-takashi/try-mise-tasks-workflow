@@ -3,6 +3,10 @@
 //USAGE arg "[task]" help="作業内容"
 //USAGE flag "--branch <branch>" help="AI が決めたブランチ名"
 import {
+	assertSupportedNodeVersion,
+	isMainModule,
+} from "../_lib/node-version.mts";
+import {
 	addWorktree,
 	origin,
 	repository,
@@ -28,8 +32,9 @@ export async function createWorktree({ branch, task, cwd = origin() }) {
 }
 
 // タスクファイルを実行したときに処理を始める。import では作業場所を変更しない。
-if (import.meta.main) {
+if (isMainModule(import.meta)) {
 	try {
+		assertSupportedNodeVersion();
 		// mise が渡した作業内容またはブランチ名で worktree を作成する。
 		const result = await createWorktree({
 			task: process.env.usage_task,

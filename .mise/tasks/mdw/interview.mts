@@ -5,6 +5,10 @@
 import { AgentClient } from "./_lib/agent-client.mts";
 import { requireInteractiveTerminal } from "./_lib/command.mts";
 import { buildPrompt, discoverRoot } from "./_lib/interview.mts";
+import {
+	assertSupportedNodeVersion,
+	isMainModule,
+} from "./_lib/node-version.mts";
 
 export async function run({
 	cwd = process.env.MISE_ORIGINAL_CWD || process.cwd(),
@@ -37,8 +41,9 @@ export async function run({
 }
 
 // mise が渡した引数を読み取り、対話またはプロンプト出力の入口として実行する。
-if (import.meta.main) {
+if (isMainModule(import.meta)) {
 	try {
+		assertSupportedNodeVersion();
 		process.exitCode = await run({
 			promptOnly: process.env.usage_prompt === "true",
 		});

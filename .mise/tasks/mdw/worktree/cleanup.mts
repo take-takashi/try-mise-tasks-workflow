@@ -2,6 +2,10 @@
 //MISE description="マージ済みの worktree を片付ける"
 //USAGE arg "<target>" help="対象の worktree のパス"
 import {
+	assertSupportedNodeVersion,
+	isMainModule,
+} from "../_lib/node-version.mts";
+import {
 	assertMerged,
 	getCleanHead,
 	origin,
@@ -28,8 +32,9 @@ export function cleanupWorktree({ target, cwd = origin() }) {
 }
 
 // タスクファイルを実行したときに処理を始める。import では作業場所を変更しない。
-if (import.meta.main) {
+if (isMainModule(import.meta)) {
 	try {
+		assertSupportedNodeVersion();
 		// mise が渡したパスを使って、対象の worktree を片付ける。
 		const result = cleanupWorktree({ target: process.env.usage_target });
 		// 呼び出し元が使えるように、結果を JSON で返す。

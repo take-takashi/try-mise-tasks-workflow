@@ -7,7 +7,7 @@
 //USAGE flag "--resolve" help="返信成功後にスレッドを resolve する"
 //USAGE flag "--dry-run" help="外部書き込みを行わず検証結果と返信内容だけを表示する"
 
-import { cli } from "../_lib/cli.mts";
+import { cli, isMainModule } from "../_lib/cli.mts";
 import { verifyOpenPullRequest } from "../_lib/github-pr.mts";
 import {
 	replyToReviewThread,
@@ -36,7 +36,7 @@ export async function run({
 }
 
 // タスクファイルを直接実行したときに、mise が渡した引数で run() を呼び出す。
-if (import.meta.main) {
+if (isMainModule(import.meta)) {
 	await cli(
 		"GitHub Pull Request のレビュースレッドへ返信し、--resolve 指定時に resolve します。",
 		async () => {

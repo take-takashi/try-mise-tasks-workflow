@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 //MISE description="集約済みのレビューの指摘を評価する"
-import { cli } from "../_lib/cli.mts";
+import { cli, isMainModule } from "../_lib/cli.mts";
 import {
 	judgeFindings,
 	loadReviewInput,
@@ -22,7 +22,7 @@ export async function run() {
 }
 
 // タスクファイルを直接実行したときに run() を呼び出す。
-if (import.meta.main) {
+if (isMainModule(import.meta)) {
 	// ヘルプの表示と、失敗時の終了コードの設定を cli() に任せる。
 	await cli("集約済みのレビューの指摘を評価します。", run);
 }

@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { cli } from "../.mise/tasks/mdw/_lib/cli.mts";
 import {
 	assertSupportedNodeVersion,
 	checkNodeVersion,
@@ -11,6 +13,21 @@ import {
 	parseNodeVersion,
 	SUPPORTED_NODE_REQUIREMENT,
 } from "../.mise/tasks/mdw/_lib/node-version.mts";
+
+const mdwRoot = fileURLToPath(new URL("../.mise/tasks/mdw/", import.meta.url));
+
+function collectPublicMdwTasks(directory: string, list: string[] = []) {
+	for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+		const fullPath = path.join(directory, entry.name);
+		if (entry.isDirectory()) {
+			if (entry.name === "_lib" || entry.name === "prompts") continue;
+			collectPublicMdwTasks(fullPath, list);
+		} else if (entry.name.endsWith(".mts")) {
+			list.push(fullPath);
+		}
+	}
+	return list;
+}
 
 test("対応する Node.js バージョンを正しく判定する", () => {
 	for (const version of [
@@ -108,4 +125,82 @@ test("isMainModule は import.meta.main を優先し、未定義時はファイ�
 		isMainModule({ url: "https://example.invalid/a.mts" }, ["node", realFile]),
 		false,
 	);
+});
+
+test("cli() は非対応 Node.js バージョン時に action を実行せず終了コード 1 を設定する", async () => {
+	let called = false;
+	const errors: string[] = [];
+	const originalError = console.error;
+	const originalExitCode = process.exitCode;
+	console.error = (...args) => {
+		errors.push(args.map(String).join(" "));
+	};
+	process.exitCode = undefined;
+	try {
+		await cli(
+			"テスト用コマンド",
+			() => {
+				called = true;
+			},
+			{ nodeVersion: "24.1.0" },
+		);
+		assert.equal(called, false);
+		assert.equal(process.exitCode, 1);
+		assert.match(errors.join("\n"), /import\.meta\.main/);
+		assert.ok(errors.join("\n").includes(SUPPORTED_NODE_REQUIREMENT));
+	} finally {
+		console.error = originalError;
+		process.exitCode = originalExitCode;
+	}
+});
+
+test("全公開タスクが isMainModule とバージョン検証を経由し、非対応バージョンを拒否する", (t) => {
+	const tasks = collectPublicMdwTasks(mdwRoot);
+	assert.ok(tasks.length >= 17);
+	for (const taskFile of tasks) {
+		const source = fs.readFileSync(taskFile, "utf8");
+		assert.equal(
+			/if\s*\(\s*import\.meta\.main\s*\)/.test(source),
+			false,
+			`${taskFile} は isMainModule(import.meta) を使ってください`,
+		);
+		assert.match(
+			source,
+			/if\s*\(\s*isMainModule\(import\.meta\)\s*\)/,
+			`${taskFile} に isMainModule(import.meta) がありません`,
+		);
+		assert.ok(
+			/\bcli\s*\(/.test(source) ||
+				/\bassertSupportedNodeVersion\s*\(/.test(source),
+			`${taskFile} に Node.js バージョン検証の呼び出しがありません`,
+		);
+	}
+
+	// 非対応バージョン（v24.1.0）を模擬した実プロセス実行で、cli() 経由と独自 try/catch 経由の両方が終了コード 1 で拒否されることを確認する。
+	const temp = fs.mkdtempSync(path.join(os.tmpdir(), "mdw-node-e2e-test-"));
+	t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
+	const preload = path.join(temp, "fake-node-24-1.mjs");
+	fs.writeFileSync(
+		preload,
+		'Object.defineProperty(process.versions, "node", { value: "24.1.0", configurable: true });\n',
+	);
+
+	for (const relativeTask of [
+		"intent.mts",
+		"interview.mts",
+		"issue/new.mts",
+		"worktree/new.mts",
+		"worktree/cleanup.mts",
+		"review/post.mts",
+	]) {
+		const taskPath = path.join(mdwRoot, relativeTask);
+		const result = spawnSync(
+			process.execPath,
+			["--import", pathToFileURL(preload).href, taskPath],
+			{ encoding: "utf8" },
+		);
+		assert.equal(result.status, 1, `${relativeTask}: ${result.stderr}`);
+		assert.match(result.stderr, /v24\.1\.0/);
+		assert.ok(result.stderr.includes(SUPPORTED_NODE_REQUIREMENT), relativeTask);
+	}
 });
