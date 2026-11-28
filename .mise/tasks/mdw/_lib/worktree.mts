@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { AgentClient } from "./agent-client.mts";
+import { ensureIgnoredDirectory } from "./ignored-dir.mts";
 
 const branchPattern =
 	/^(feat|fix|refactor|docs|test|chore|perf|build|ci|revert)\/[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -179,9 +180,7 @@ export async function resolveBranchName({ branch, task }, root) {
 
 export function addWorktree(root, { branch, target }, base) {
 	const container = path.join(root, ".worktree");
-	if (fs.existsSync(container) && fs.lstatSync(container).isSymbolicLink())
-		throw new Error(".worktree にシンボリックリンクは使用できません。");
-	fs.mkdirSync(container, { recursive: true });
+	ensureIgnoredDirectory(container, ".worktree");
 	command(["git", "worktree", "add", "-b", branch, "--", target, base], {
 		cwd: root,
 	});
