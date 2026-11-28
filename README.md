@@ -2,7 +2,7 @@
 
 MDWは、miseのファイルタスクを公開入口にして、組み合わせ可能なワークフローの部品を実行する基盤のPoCです。セキュリティ、アーキテクチャ・運用、品質の3つの観点から並列にコードレビューする機能を備えています。Node.jsの標準機能（`.mts`の無設定実行と`import.meta.main`）を使います。
 
-`.mise/tasks/mdw/`フォルダーを別のプロジェクトの`.mise/tasks/`にコピーし、必要に応じて`MDW_`環境変数を設定して利用できます。コピー先ではNode.js（v22.18.0以降の22系LTS、またはv24.2.0以降）、Git、利用するCLIを実行できるようにし、macOSとLinuxではタスクファイルに実行権限を付けてください（コピー先プロジェクトのNode.jsバージョン管理には介入しません）。共有のモデル設定を使う場合は`.mdw/models.env`と`mise.toml`のenvファイル設定もコピーしてください。生成される`.reviews/`と`.worktree/`には、作成時に自身を含めて無視する`.gitignore`を自動生成するため、コピー先のルート`.gitignore`を編集する必要はありません。
+`.mise/tasks/mdw/`フォルダーを別のプロジェクトの`.mise/tasks/`にコピーし、`mise run mdw:init`を実行するだけで使い始められます（`.mise/conf.d/mdw.toml`・`.mdw/.gitignore`・`.mdw/models.env`の配置と環境診断を行い、コピー先の`mise.toml`や`AGENTS.md`は書き換えません）。コピー先ではNode.js（v22.18.0以降の22系LTS、またはv24.2.0以降）、Git、利用するCLIを実行できるようにし、macOSとLinuxではタスクファイルに実行権限を付けてください（コピー先プロジェクトのNode.jsバージョン管理には介入しません）。生成される`.reviews/`と`.worktree/`には、作成時に自身を含めて無視する`.gitignore`を自動生成するため、コピー先のルート`.gitignore`を編集する必要はありません。
 
 ## AI に使い方を読ませる
 
@@ -113,7 +113,7 @@ mise run mdw:review:fix --pr https://github.com/OWNER/REPO/pull/123 --verify "mi
 
 ## プロバイダーとモデルの設定
 
-`mise.toml`は`.mdw/models.env`と任意の`.mdw/models.local.env`を読み込みます。共有してよい既定値は前者に置き、個人用の上書きはGit管理外の後者に置きます。`mise.local.toml`にも個人用の上書きを置けます。同じ環境変数については、miseがenvファイルを記述順に読み込み、後のファイルが前の値を上書きします。さらに、`mise.local.toml`は`mise.toml`より後に読み込まれるため、同じ変数の値が優先されます。dotenvの値は、miseを起動した環境に同じ変数がある場合も置き換えます。[envファイルの読み込み](https://mise.jdx.dev/environments/#env_._file)と[設定ファイルの優先順位](https://mise.jdx.dev/environments/#precedence)を参照してください。
+`.mise/conf.d/mdw.toml`は`.mdw/models.env`と任意の`.mdw/models.local.env`を読み込みます（`mise run mdw:init`で自動配置できます。既定では既存ファイルを上書きせず、`--force`指定時のみ`.mise/conf.d/mdw.toml`と`.mdw/.gitignore`を更新し、`.mdw/models.env`は保護します）。共有してよい既定値は`.mdw/models.env`に置き、個人用の上書きはGit管理外の`.mdw/models.local.env`に置きます。`mise.local.toml`にも個人用の上書きを置けます。同じ環境変数については、miseが`conf.d/*.toml`を`mise.toml`や`mise.local.toml`より先に読み込み、envファイルも記述順に読み込むため、後のファイルが前の値を上書きします。dotenvの値は、miseを起動した環境に同じ変数がある場合も置き換えます。[envファイルの読み込み](https://mise.jdx.dev/environments/#env_._file)と[設定ファイルの優先順位](https://mise.jdx.dev/environments/#precedence)を参照してください。
 
 レビュー設定は、役割ごとの`MDW_REVIEW_<ROLE>_*`、旧設定との互換用`AWF_REVIEW_<ROLE>_*`、レビュー共通の`MDW_REVIEW_*`、`MDW_DEFAULT_*`の順で解決します。どこにも値がない場合、プロバイダーは`codex`、エフォートは`medium`、課金方式は`subscription`を使い、モデルについては`--model`を渡さず各AI CLI側の既定モデルに委ねます。モデルとエフォートの組み合わせの利用可否は契約やCLIの設定によって異なるため、必要に応じて変更してください。
 

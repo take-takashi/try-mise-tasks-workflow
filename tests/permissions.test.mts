@@ -31,6 +31,7 @@ test("公開タスクだけが実行権限を持つ", {
 		"docs/search.mts",
 		"docs/validate.mts",
 		"mdw/check.mts",
+		"mdw/init.mts",
 		"mdw/interview.mts",
 		"mdw/intent.mts",
 		"mdw/issue/new.mts",

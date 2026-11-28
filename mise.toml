@@ -2,12 +2,6 @@
 node = "24"
 biome = "latest"
 
-[env]
-_.file = [
-  ".mdw/models.env",
-  { path = ".mdw/models.local.env", redact = true },
-]
-
 [tasks.check]
 description = "Biomeの既定設定でフォーマットとコードを検証します"
 run = "biome check .mise/tasks tests"
