@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { runCommand } from "./command.mts";
+import { ensureIgnoredDirectory } from "./ignored-dir.mts";
 import { readJson, writeJson } from "./json.mts";
 import { roles } from "./review-data.mts";
 
@@ -28,14 +29,19 @@ export class ReviewWorkspace {
 		return readJson(path.join(this.output, name));
 	}
 
+	ensureOutput() {
+		ensureIgnoredDirectory(this.output, ".reviews");
+	}
+
 	write(name: string, data) {
+		this.ensureOutput();
 		const file = path.join(this.output, name);
 		writeJson(file, data);
 		return file;
 	}
 
 	reset() {
-		fs.mkdirSync(this.output, { recursive: true });
+		this.ensureOutput();
 		for (const name of [
 			"merged.json",
 			"judged.json",
