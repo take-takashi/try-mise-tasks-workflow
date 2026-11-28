@@ -7,7 +7,7 @@
 //USAGE flag "--dry-run" help="ファイル変更や外部書き込みを行わず対象確認と計画だけを表示する"
 
 import { AgentClient } from "../_lib/agent-client.mts";
-import { cli } from "../_lib/cli.mts";
+import { cli, isMainModule } from "../_lib/cli.mts";
 import { verifyOpenPullRequest } from "../_lib/github-pr.mts";
 import {
 	assertNoIgnoredFileChanges,
@@ -310,7 +310,7 @@ export async function run({
 }
 
 // タスクファイルを直接実行したときに、mise が渡した引数で run() を呼び出す。
-if (import.meta.main) {
+if (isMainModule(import.meta)) {
 	await cli(
 		"GitHub Pull Request の未解決レビュースレッドを自律修正し、返信と resolve まで実行します。",
 		async () => {

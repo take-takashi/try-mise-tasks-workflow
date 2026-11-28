@@ -2,7 +2,7 @@
 //MISE description="レビューするコミットと変更ファイルを固定する"
 //USAGE flag "--base <ref>" help="比較元のブランチまたはコミット" default="main"
 //USAGE flag "--head <ref>" help="レビュー対象のブランチまたはコミット" default="HEAD"
-import { cli } from "../_lib/cli.mts";
+import { cli, isMainModule } from "../_lib/cli.mts";
 import { prepare } from "../_lib/review-steps.mts";
 
 export async function run(options = {}) {
@@ -16,7 +16,7 @@ export async function run(options = {}) {
 }
 
 // タスクファイルを実行したときに run() を呼び出す。import では対象を準備しない。
-if (import.meta.main) {
+if (isMainModule(import.meta)) {
 	// ヘルプの表示と、失敗時の終了コードの設定を cli() に任せる。
 	await cli(
 		"レビュー対象を準備します。",

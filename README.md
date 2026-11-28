@@ -1,8 +1,8 @@
 # MDW: mise dev workflows
 
-MDWは、miseのファイルタスクを公開入口にして、組み合わせ可能なワークフローの部品を実行する基盤のPoCです。セキュリティ、アーキテクチャ・運用、品質の3つの観点から並列にコードレビューする機能を備えています。Node.js 24の標準機能を使います。
+MDWは、miseのファイルタスクを公開入口にして、組み合わせ可能なワークフローの部品を実行する基盤のPoCです。セキュリティ、アーキテクチャ・運用、品質の3つの観点から並列にコードレビューする機能を備えています。Node.jsの標準機能（`.mts`の無設定実行と`import.meta.main`）を使います。
 
-`.mise/tasks/mdw/`フォルダーを別のプロジェクトの`.mise/tasks/`にコピーし、必要に応じて`MDW_`環境変数を設定して利用できます。コピー先ではNode.js 24、Git、利用するCLIを実行できるようにし、macOSとLinuxではタスクファイルに実行権限を付けてください。共有のモデル設定を使う場合は`.mdw/models.env`と`mise.toml`のenvファイル設定もコピーしてください。生成される`.reviews/`と`.worktree/`には、作成時に自身を含めて無視する`.gitignore`を自動生成するため、コピー先のルート`.gitignore`を編集する必要はありません。
+`.mise/tasks/mdw/`フォルダーを別のプロジェクトの`.mise/tasks/`にコピーし、必要に応じて`MDW_`環境変数を設定して利用できます。コピー先ではNode.js（v22.18.0以降の22系LTS、またはv24.2.0以降）、Git、利用するCLIを実行できるようにし、macOSとLinuxではタスクファイルに実行権限を付けてください（コピー先プロジェクトのNode.jsバージョン管理には介入しません）。共有のモデル設定を使う場合は`.mdw/models.env`と`mise.toml`のenvファイル設定もコピーしてください。生成される`.reviews/`と`.worktree/`には、作成時に自身を含めて無視する`.gitignore`を自動生成するため、コピー先のルート`.gitignore`を編集する必要はありません。
 
 ## AI に使い方を読ませる
 
@@ -23,7 +23,7 @@ mise run mdw:intent
 ## 事前準備
 
 - mise、Git、利用する Codex CLI・Claude Code CLI・Antigravity CLI（`agy` v1.1.27 以上）のいずれかをインストールし、各 CLI でログインしてください。`agy` で `--output-format json`、`--json-schema`、`--disable-slash-commands`、`denied_actions` が使えない場合は `agy update` で更新してください。
-- `mise install`でNode.js 24とBiomeの最新版を用意してください。初回はmiseによるプロジェクト設定の信頼確認が表示される場合があります。
+- `mise install`で本リポジトリの開発・テスト用のNode.js 24とBiomeの最新版を用意してください（別リポジトリへコピーして使う場合の動作要件は Node.js v22.18.0 以降または v24.2.0 以降です）。初回はmiseによるプロジェクト設定の信頼確認が表示される場合があります。
 - レビュー対象の変更をコミットしてください。既定では`main`と`HEAD`の共通祖先から`HEAD`までのコミット済みの変更を対象とし、未コミットの変更を含めないよう各CLIへ依頼します。
 - AIのサービスへ差分が送信されるため、送信してよい内容かを確認してください。
 
