@@ -1,5 +1,8 @@
+import { assertSupportedNodeVersion } from "./node-version.mts";
+
 export async function cli(description, action, { usage = false } = {}) {
 	try {
+		assertSupportedNodeVersion();
 		const args = process.argv.slice(2);
 		if (args.includes("--help") || args.includes("-h")) {
 			console.log(description);
